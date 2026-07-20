@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  password  String
+  phone     String   @default("")
+  avatar    String   @default("")
+  role      String   @default("user") // user | admin
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  orders    Order[]
+  addresses Address[]
+  coupons   UserCoupon[]
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  name          String
+  price         Float
+  originalPrice Float    @default(0)
+  deliveryFee   Float    @default(0)
+  category      String   @default("")
+  unit          String   @default("份")
+  stock         Int      @default(0)
+  sales         Int      @default(0)
+  images        String   @default("[]") // JSON array - 主图
+  detailImages  String   @default("[]") // JSON array - 详情页图片(最多5张)
+  description   String   @default("")
+  detail        String   @default("")
+  tags          String   @default("[]") // JSON array
+  status        String   @default("on") // on | off
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  orderItems    OrderItem[]
+}
+
+model Order {
+  id             String      @id @default(cuid())
+  orderNo        String      @unique
+  userId         String
+  user           User        @relation(fields: [userId], references: [id])
+  items          OrderItem[]
+  totalAmount    Float
+  deliveryFee    Float       @default(0)
+  itemsAmount    Float       @default(0)
+  couponDiscount Float       @default(0)
+  remark         String      @default("")
+  addressId      String?
+  address        Address?    @relation(fields: [addressId], references: [id])
+  status         String      @default("pending")
+  trackingNo     String      @default("")
+  payTime        DateTime?
+  deliveryTime   DateTime?
+  completeTime   DateTime?
+  cancelTime     DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  name      String
+  image     String  @default("")
+  price     Float
+  quantity  Int
+  unit      String  @default("份")
+}
+
+model Address {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id])
+  name      String
+  phone     String
+  region    String  @default("")
+  detail    String
+  isDefault Boolean @default(false)
+  createdAt DateTime @default(now())
+  orders    Order[]
+}
+
+model Coupon {
+  id          String       @id @default(cuid())
+  name        String
+  type        String       // reduce | discount
+  value       Float
+  minAmount   Float        @default(0)
+  stock       Int          @default(0)
+  claimed     Int          @default(0)
+  startTime   String
+  endTime     String
+  description String       @default("")
+  status      String       @default("active") // active | expired
+  createdAt   DateTime     @default(now())
+  userCoupons UserCoupon[]
+}
+
+model UserCoupon {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  couponId  String
+  coupon    Coupon   @relation(fields: [couponId], references: [id])
+  status    String   @default("active") // active | used | expired
+  claimTime DateTime @default(now())
+  useTime   DateTime?
+}
+
+model ShopSetting {
+  id         String @id @default("default")
+  name       String @default("甜蜜烘焙")
+  phone      String @default("")
+  desc       String @default("用心烘焙每一份甜蜜")
+  paymentQR  String @default("")
+  layout     String @default("{}")
+}
