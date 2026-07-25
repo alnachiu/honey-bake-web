@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function NewProductPage() {
@@ -13,6 +13,79 @@ export default function NewProductPage() {
     detailImages: [] as string[]
   })
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const mainImgInputRef = useRef<HTMLInputElement>(null)
+  const replaceImgIndexRef = useRef<number>(-1)
+  const detailImgInputRef = useRef<HTMLInputElement>(null)
+
+  const uploadFile = async (file: File): Promise<string | null> => {
+    if (file.size > 5 * 1024 * 1024) { alert('图片不能超过 5MB'); return null }
+    const formData = new FormData()
+    formData.append('file', file)
+    setUploading(true)
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (data.url) return data.url
+      alert(data.error || '上传失败')
+      return null
+    } catch (err) { console.error(err); alert('上传失败'); return null }
+    finally { setUploading(false) }
+  }
+
+  const handleMainImgSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const url = await uploadFile(file)
+    if (url) {
+      const idx = replaceImgIndexRef.current
+      if (idx >= 0) {
+        // 替换指定位置的图片
+        setForm((p: any) => {
+          const newImages = [...p.images]
+          newImages[idx] = url
+          return {...p, images: newImages}
+        })
+        replaceImgIndexRef.current = -1
+      } else {
+        // 新增图片
+        setForm((p: any) => ({...p, images: [...p.images, url]}))
+      }
+    }
+    e.target.value = ''
+  }
+
+  const handleDetailImgSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const url = await uploadFile(file)
+    if (url) {
+      setForm((p: any) => ({...p, detailImages: [...p.detailImages, url]}))
+    }
+    e.target.value = ''
+  }
+
+  const addImage = () => {
+    replaceImgIndexRef.current = -1
+    mainImgInputRef.current?.click()
+  }
+
+  const replaceImage = (index: number) => {
+    replaceImgIndexRef.current = index
+    mainImgInputRef.current?.click()
+  }
+
+  const removeImage = (index: number) => {
+    setForm((p: any) => ({...p, images: p.images.filter((_: any, i: number) => i !== index)}))
+  }
+
+  const addDetailImage = () => {
+    detailImgInputRef.current?.click()
+  }
+
+  const removeDetailImage = (index: number) => {
+    setForm((p: any) => ({...p, detailImages: p.detailImages.filter((_: any, i: number) => i !== index)}))
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -40,42 +113,26 @@ export default function NewProductPage() {
     setSaving(false)
   }
 
-  const addImage = () => {
-    const url = prompt('请输入商品主图URL:')
-    if (url && url.trim()) {
-      setForm((p: any) => ({...p, images: [...p.images, url.trim()]}))
-    }
-  }
-
-  const replaceImage = (index: number) => {
-    const url = prompt('请输入新图片URL:', form.images[index] || '')
-    if (url && url.trim()) {
-      setForm((p: any) => {
-        const newImages = [...p.images]
-        newImages[index] = url.trim()
-        return {...p, images: newImages}
-      })
-    }
-  }
-
-  const removeImage = (index: number) => {
-    setForm((p: any) => ({...p, images: p.images.filter((_: any, i: number) => i !== index)}))
-  }
-
-  const addDetailImage = () => {
-    const url = prompt('请输入图片URL:')
-    if (url && form.detailImages.length < 5) {
-      setForm((p: any) => ({...p, detailImages: [...p.detailImages, url]}))
-    }
-  }
-
-  const removeDetailImage = (index: number) => {
-    setForm((p: any) => ({...p, detailImages: p.detailImages.filter((_: any, i: number) => i !== index)}))
-  }
-
   return (
     <div className="page-container pt-4 pb-20">
       <h1 className="text-lg font-bold text-text-primary mb-4">新增商品</h1>
+
+      {/* 隐藏的文件输入框 */}
+      <input
+        ref={mainImgInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleMainImgSelect}
+      />
+      <input
+        ref={detailImgInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleDetailImgSelect}
+      />
+
       <form onSubmit={handleSubmit} className="space-y-3">
         <div className="card space-y-3">
           <div><label className="text-xs text-text-secondary block mb-1">商品名称 *</label><input className="input-field" value={form.name} onChange={e => setForm((p: any) => ({...p, name: e.target.value}))} required /></div>
@@ -114,7 +171,9 @@ export default function NewProductPage() {
         <div className="card space-y-3">
           <div className="flex justify-between items-center">
             <label className="text-xs text-text-secondary block mb-1">商品主图</label>
-            <button type="button" onClick={addImage} className="text-xs px-3 py-1 rounded-full bg-primary-500 text-white">＋ 添加主图</button>
+            <button type="button" onClick={addImage} disabled={uploading} className="text-xs px-3 py-1 rounded-full bg-primary-500 text-white disabled:opacity-50">
+              {uploading ? '上传中...' : '＋ 本地上传主图'}
+            </button>
           </div>
           <div className="flex gap-2 flex-wrap">
             {form.images.map((url: string, i: number) => (
@@ -127,7 +186,7 @@ export default function NewProductPage() {
               </div>
             ))}
             {form.images.length === 0 && (
-              <p className="text-xs text-text-light py-3">暂无主图，点击"添加主图"上传。不设置将使用默认图片</p>
+              <p className="text-xs text-text-light py-3">暂无主图，点击"本地上传主图"选择图片。不设置将使用默认图片</p>
             )}
           </div>
         </div>
@@ -135,7 +194,9 @@ export default function NewProductPage() {
           <div className="flex justify-between items-center">
             <label className="text-xs text-text-secondary block mb-1">详情页图片（最多5张）</label>
             {form.detailImages.length < 5 && (
-              <button type="button" onClick={addDetailImage} className="text-xs px-3 py-1 rounded-full bg-primary-500 text-white">＋ 添加</button>
+              <button type="button" onClick={addDetailImage} disabled={uploading} className="text-xs px-3 py-1 rounded-full bg-primary-500 text-white disabled:opacity-50">
+                {uploading ? '上传中...' : '＋ 本地上传'}
+              </button>
             )}
           </div>
           <div className="flex gap-2 flex-wrap">
@@ -146,11 +207,11 @@ export default function NewProductPage() {
               </div>
             ))}
             {form.detailImages.length === 0 && (
-              <p className="text-xs text-text-light py-3">暂无详情图，点击"添加"输入图片URL</p>
+              <p className="text-xs text-text-light py-3">暂无详情图，点击"本地上传"选择图片</p>
             )}
           </div>
         </div>
-        <button type="submit" disabled={saving} className="btn-primary w-full">{saving ? '创建中...' : '创建商品'}</button>
+        <button type="submit" disabled={saving || uploading} className="btn-primary w-full">{saving ? '创建中...' : '创建商品'}</button>
       </form>
     </div>
   )
