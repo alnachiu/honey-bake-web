@@ -1,12 +1,6 @@
 import { NextResponse } from 'next/server'
-import { v2 as cloudinary } from 'cloudinary'
-
-// Cloudinary 配置
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-})
+import { writeFile, mkdir } from 'fs/promises'
+import path from 'path'
 
 export async function POST(request: Request) {
   try {
@@ -28,35 +22,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '图片不能超过 5MB' }, { status: 400 })
     }
 
-    // 检查 Cloudinary 是否已配置
-    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
-      return NextResponse.json({ error: '图片存储服务未配置，请联系管理员设置 Cloudinary' }, { status: 500 })
-    }
-
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
 
-    // 上传到 Cloudinary
-    const result = await new Promise<string>((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'honey-bake',
-          resource_type: 'image',
-          format: ext === 'jpg' ? 'jpg' : ext,
-          quality: 'auto',
-          fetch_format: 'auto',
-        },
-        (error, result) => {
-          if (error) reject(error)
-          else resolve(result!.secure_url)
-        }
-      )
-      uploadStream.end(buffer)
-    })
+    // 生成唯一文件名
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+    const uploadDir = path.join(process.cwd(), 'uploads')
 
-    return NextResponse.json({ url: result })
+    // 确保目录存在
+    await mkdir(uploadDir, { recursive: true })
+
+    const filePath = path.join(uploadDir, fileName)
+    await writeFile(filePath, buffer)
+
+    // 返回 API 路由的 URL，由专门的路由提供图片服务
+    const url = `/api/uploads/${fileName}`
+    return NextResponse.json({ url })
   } catch (error) {
     console.error('Upload error:', error)
-    return NextResponse.json({ error: '上传失败，请稍后重试' }, { status: 500 })
+    return NextResponse.json({ error: '上传失败' }, { status: 500 })
   }
 }
