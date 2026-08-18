@@ -3,8 +3,9 @@
 # 数据持久化：项目目录下的 ./data 目录（数据库 + 上传图片都在里面，备份它即可）
 services:
   honey-bake:
+    # 镜像由 GitHub Actions 自动构建推送到 GHCR，服务器用 docker compose pull 拉取
+    image: ghcr.io/alnachiu/honey-bake-web:latest
     build: .
-    image: honey-bake-web:latest
     container_name: honey-bake
     restart: always
     ports:

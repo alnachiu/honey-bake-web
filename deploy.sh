@@ -33,9 +33,10 @@ else
   cd "$APP_DIR"
 fi
 
-# 3. 构建镜像（首次构建约 3-5 分钟，需服务器能访问 npm 源）
-echo "[3/4] 构建 Docker 镜像..."
-docker compose build
+# 3. 拉取最新镜像（镜像由 GitHub Actions 自动构建，服务器不再本地构建）
+#    如果 GHCR 暂时拉取失败，可手动执行: docker compose build && docker compose up -d
+echo "[3/4] 拉取最新镜像 ..."
+docker compose pull
 
 # 4. 启动/更新容器
 echo "[4/4] 启动服务..."
