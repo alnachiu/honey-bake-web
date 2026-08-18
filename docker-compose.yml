@@ -13,5 +13,5 @@ services:
       - ./data:/app/data
     environment:
       TZ: Asia/Shanghai
-      # 上线后务必改成强随机字符串，例如：openssl rand -hex 32
-      # JWT_SECRET=改成你的强随机字符串
+      # JWT_SECRET 来自同目录 .env 文件（见下方操作）；不填时用默认值
+      JWT_SECRET: ${JWT_SECRET:-honey-bake-jwt-secret-key-2026}
