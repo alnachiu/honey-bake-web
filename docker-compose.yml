@@ -1,0 +1,17 @@
+# 甜蜜烘焙 Honey Bake —— 阿里云轻量服务器 / 任意云服务器一键运行
+# 使用：docker compose up -d --build
+# 数据持久化：项目目录下的 ./data 目录（数据库 + 上传图片都在里面，备份它即可）
+services:
+  honey-bake:
+    build: .
+    image: honey-bake-web:latest
+    container_name: honey-bake
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      TZ: Asia/Shanghai
+      # 上线后务必改成强随机字符串，例如：openssl rand -hex 32
+      # JWT_SECRET=改成你的强随机字符串

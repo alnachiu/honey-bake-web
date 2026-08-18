@@ -27,7 +27,8 @@ export async function POST(request: Request) {
 
     // 生成唯一文件名
     const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-    const uploadDir = path.join(process.cwd(), 'uploads')
+    // 上传目录优先读环境变量（部署时指向持久化卷），本地开发回退到项目内 uploads/
+    const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads')
 
     // 确保目录存在
     await mkdir(uploadDir, { recursive: true })

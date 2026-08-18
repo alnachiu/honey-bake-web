@@ -14,7 +14,9 @@ export async function GET(
       return new NextResponse('Forbidden', { status: 403 })
     }
 
-    const filePath = path.join(process.cwd(), 'uploads', name)
+    // 上传目录优先读环境变量（部署时指向持久化卷），本地开发回退到项目内 uploads/
+    const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads')
+    const filePath = path.join(uploadDir, name)
     const file = await readFile(filePath)
 
     // 根据扩展名设置 MIME 类型

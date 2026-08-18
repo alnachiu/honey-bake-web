@@ -10,3 +10,6 @@ public/uploads/*
 
 uploads/*
 !uploads/.gitkeep
+
+# docker compose 持久化数据目录（数据库 + 上传图片，部署后生成）
+data/
