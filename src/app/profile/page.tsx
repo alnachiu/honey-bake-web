@@ -12,6 +12,10 @@ export default function ProfilePage() {
   const [avatarUrl, setAvatarUrl] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [oldPassword, setOldPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [pwdLoading, setPwdLoading] = useState(false)
 
   useEffect(() => { if (!user) router.push('/login') }, [user])
 
@@ -73,6 +77,30 @@ export default function ProfilePage() {
     setTimeout(() => setMessage(''), 2000)
   }
 
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setMessage('')
+    if (newPassword.length < 6) { setMessage('新密码至少6位'); return }
+    if (newPassword !== confirmPassword) { setMessage('两次输入的新密码不一致'); return }
+    setPwdLoading(true)
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldPassword, newPassword })
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setMessage('✅ 密码修改成功，下次登录请用新密码')
+        setOldPassword(''); setNewPassword(''); setConfirmPassword('')
+      } else {
+        setMessage(data.error || '修改失败')
+      }
+    } catch (err) { setMessage('修改失败，请稍后重试') }
+    setPwdLoading(false)
+    setTimeout(() => setMessage(''), 3000)
+  }
+
   if (!user) return null
 
   const showAvatar = avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(user.name || 'user')}&backgroundColor=fff0e8`
@@ -127,6 +155,28 @@ export default function ProfilePage() {
           <span className="text-sm text-text-primary flex-1">优惠券</span>
           <span className="text-text-light">›</span>
         </Link>
+      </div>
+
+      {/* 修改密码 */}
+      <div className="card mt-3">
+        <p className="text-sm font-medium text-text-primary mb-3">🔒 修改密码</p>
+        <form onSubmit={handleChangePassword} className="space-y-3">
+          <div>
+            <label className="text-xs text-text-secondary block mb-1">原密码</label>
+            <input type="password" className="input-field" placeholder="请输入原密码" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required />
+          </div>
+          <div>
+            <label className="text-xs text-text-secondary block mb-1">新密码</label>
+            <input type="password" className="input-field" placeholder="至少6位" value={newPassword} onChange={e => setNewPassword(e.target.value)} required />
+          </div>
+          <div>
+            <label className="text-xs text-text-secondary block mb-1">确认新密码</label>
+            <input type="password" className="input-field" placeholder="再次输入新密码" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required />
+          </div>
+          <button type="submit" className="btn-primary w-full" disabled={pwdLoading}>
+            {pwdLoading ? '保存中...' : '保存新密码'}
+          </button>
+        </form>
       </div>
 
       {user.role === 'admin' && (
