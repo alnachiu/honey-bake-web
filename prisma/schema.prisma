@@ -93,19 +93,21 @@ model Address {
 }
 
 model Coupon {
-  id          String       @id @default(cuid())
-  name        String
-  type        String       // reduce | discount
-  value       Float
-  minAmount   Float        @default(0)
-  stock       Int          @default(0)
-  claimed     Int          @default(0)
-  startTime   String
-  endTime     String
-  description String       @default("")
-  status      String       @default("active") // active | expired
-  createdAt   DateTime     @default(now())
-  userCoupons UserCoupon[]
+  id           String       @id @default(cuid())
+  name         String
+  type         String       // reduce | discount
+  value        Float
+  minAmount    Float        @default(0)
+  stock        Int          @default(0)
+  claimed      Int          @default(0)
+  startTime    String
+  endTime      String
+  description  String       @default("")
+  stackable    Boolean      @default(false) // 是否可与其他优惠券叠加使用
+  perUserLimit Int          @default(1) // 每人最多领取数量，0 = 不限
+  status       String       @default("active") // active | expired
+  createdAt    DateTime     @default(now())
+  userCoupons  UserCoupon[]
 }
 
 model UserCoupon {
@@ -113,10 +115,12 @@ model UserCoupon {
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   couponId  String
-  coupon    Coupon   @relation(fields: [couponId], references: [id])
+  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
   status    String   @default("active") // active | used | expired
   claimTime DateTime @default(now())
   useTime   DateTime?
+
+  @@index([userId, couponId])
 }
 
 model ShopSetting {

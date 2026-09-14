@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
-import { generateOrderNo, calcDiscount } from '@/lib/utils'
+import { generateOrderNo } from '@/lib/utils'
+import { resolveUserCoupons } from '@/lib/coupons'
 
 export async function GET(request: Request) {
   try {
@@ -65,53 +66,62 @@ export async function POST(request: Request) {
     // 计算配送费
     const deliveryFee = itemsAmount >= 68 ? 0 : 5
 
-    // 计算优惠券折扣
-    let couponDiscount = 0
-    if (data.couponId) {
-      const coupon = await prisma.coupon.findUnique({ where: { id: data.couponId } })
-      if (coupon && coupon.status === 'active') {
-        const result = calcDiscount(itemsAmount, { type: coupon.type, value: coupon.value, minAmount: coupon.minAmount })
-        couponDiscount = result.discount
-        // 标记优惠券已使用
-        await prisma.userCoupon.updateMany({
-          where: { userId: user.id, couponId: data.couponId, status: 'active' },
-          data: { status: 'used', useTime: new Date() }
-        })
-      }
-    }
+    // 校验并计算优惠券（归属 / 有效期 / 叠加规则）。
+    // 传的是 UserCoupon.id（用户券包中那一张），不是券模板 id。
+    const userCouponIds: string[] = Array.isArray(data.userCouponIds) ? data.userCouponIds : []
 
-    // 处理地址
-    let addressId = data.addressId || null
-    if (data.address && !addressId) {
-      const addr = await prisma.address.create({
-        data: {
-          userId: user.id,
-          name: data.address.name,
-          phone: data.address.phone,
-          region: data.address.region || '',
-          detail: data.address.detail,
-          isDefault: false
-        }
-      })
-      addressId = addr.id
+    const resolved = await resolveUserCoupons(user.id, userCouponIds, itemsAmount)
+    if (!resolved.ok) {
+      return NextResponse.json({ error: resolved.error }, { status: 400 })
     }
+    const couponDiscount = resolved.discount
 
     const totalAmount = Math.max(0, itemsAmount + deliveryFee - couponDiscount)
 
-    const order = await prisma.order.create({
-      data: {
-        orderNo: generateOrderNo(),
-        userId: user.id,
-        items: { create: orderItems },
-        totalAmount,
-        deliveryFee,
-        itemsAmount,
-        couponDiscount,
-        remark: data.remark || '',
-        addressId,
-        status: 'pending'
-      },
-      include: { items: true }
+    // 核销优惠券与创建订单放在同一事务：下单失败时券自动回滚，不会被白白烧掉
+    const order = await prisma.$transaction(async tx => {
+      if (resolved.coupons.length) {
+        await tx.userCoupon.updateMany({
+          where: {
+            id: { in: resolved.coupons.map(c => c.userCouponId) },
+            userId: user.id,
+            status: 'active'
+          },
+          data: { status: 'used', useTime: new Date() }
+        })
+      }
+
+      // 处理地址
+      let addressId = data.addressId || null
+      if (data.address && !addressId) {
+        const addr = await tx.address.create({
+          data: {
+            userId: user.id,
+            name: data.address.name,
+            phone: data.address.phone,
+            region: data.address.region || '',
+            detail: data.address.detail,
+            isDefault: false
+          }
+        })
+        addressId = addr.id
+      }
+
+      return tx.order.create({
+        data: {
+          orderNo: generateOrderNo(),
+          userId: user.id,
+          items: { create: orderItems },
+          totalAmount,
+          deliveryFee,
+          itemsAmount,
+          couponDiscount,
+          remark: data.remark || '',
+          addressId,
+          status: 'pending'
+        },
+        include: { items: true }
+      })
     })
 
     return NextResponse.json({ order })

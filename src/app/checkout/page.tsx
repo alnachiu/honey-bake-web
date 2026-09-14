@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCart } from '@/components/CartProvider'
+import { calcCouponsDiscount } from '@/lib/utils'
 
 export default function CheckoutPage() {
   const router = useRouter()
@@ -14,7 +15,7 @@ export default function CheckoutPage() {
   const [addresses, setAddresses] = useState<any[]>([])
   const [selectedAddressId, setSelectedAddressId] = useState<string>('')
   const [coupons, setCoupons] = useState<any[]>([])
-  const [selectedCouponId, setSelectedCouponId] = useState<string>('')
+  const [selectedCouponIds, setSelectedCouponIds] = useState<string[]>([])
   const [remark, setRemark] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [showAddressModal, setShowAddressModal] = useState(false)
@@ -72,16 +73,22 @@ export default function CheckoutPage() {
 
   const itemsAmount = items.reduce((s, i) => s + i.price * i.quantity, 0)
   const deliveryFee = itemsAmount >= 68 ? 0 : 5
-  const selectedCoupon = coupons.find(c => c.id === selectedCouponId)
-  let couponDiscount = 0
-  if (selectedCoupon) {
-    if (selectedCoupon.type === 'reduce' && itemsAmount >= selectedCoupon.minAmount) {
-      couponDiscount = selectedCoupon.value
-    } else if (selectedCoupon.type === 'discount') {
-      couponDiscount = Math.round(itemsAmount * (1 - selectedCoupon.value / 10) * 100) / 100
-    }
-  }
+  const selectedCoupons = coupons.filter(c => selectedCouponIds.includes(c.id))
+  const { discount: couponDiscount } = calcCouponsDiscount(itemsAmount, selectedCoupons)
   const totalAmount = Math.max(0, itemsAmount + deliveryFee - couponDiscount)
+
+  // 多选券时维持叠加规则：两张券必须都允许叠加才能同时选中
+  const toggleCoupon = (coupon: any) => {
+    setSelectedCouponIds(prev => {
+      if (prev.includes(coupon.id)) return prev.filter(id => id !== coupon.id)
+      const others = coupons.filter(c => prev.includes(c.id) && c.id !== coupon.id)
+      if (others.length && (!coupon.stackable || others.some(c => !c.stackable))) {
+        alert('该优惠券不可与其他优惠券叠加使用，请先取消已选中的券')
+        return prev
+      }
+      return [...prev, coupon.id]
+    })
+  }
 
   const submitOrder = async () => {
     if (submitting) return
@@ -100,8 +107,8 @@ export default function CheckoutPage() {
             phone: guestInfo.phone,
             address: guestInfo.detail,
             items: items.map(i => ({ id: i.id, name: i.name, image: i.image, price: i.price, quantity: i.quantity, unit: i.unit })),
-            remark,
-            couponId: selectedCouponId
+            remark
+            // 游客没有券包，不传优惠券
           })
         })
         const data = await res.json()
@@ -128,7 +135,7 @@ export default function CheckoutPage() {
         body: JSON.stringify({
           items: items.map(i => ({ productId: i.id, name: i.name, image: i.image, price: i.price, quantity: i.quantity, unit: i.unit })),
           addressId: selectedAddressId,
-          couponId: selectedCouponId,
+          userCouponIds: selectedCoupons.map(c => c.userCouponId).filter(Boolean),
           remark
         })
       })
@@ -201,7 +208,11 @@ export default function CheckoutPage() {
           <div className="card" onClick={() => coupons.length && setShowCouponModal(true)}>
             <div className="flex justify-between items-center">
               <span className="text-sm text-text-primary">🎫 优惠券</span>
-              <span className="text-sm text-primary-500">{selectedCoupon ? `-¥${couponDiscount.toFixed(2)}` : coupons.length ? '选择 ›' : '暂无可用'}</span>
+              <span className="text-sm text-primary-500">
+                {couponDiscount > 0
+                  ? `-¥${couponDiscount.toFixed(2)}${selectedCoupons.length > 1 ? ` (${selectedCoupons.length}张)` : ''}`
+                  : coupons.length ? '选择 ›' : '暂无可用'}
+              </span>
             </div>
           </div>
         )}
@@ -281,13 +292,39 @@ export default function CheckoutPage() {
               <button onClick={() => setShowCouponModal(false)} className="text-text-light">✕</button>
             </div>
             <div className="p-4 space-y-3">
-              <div onClick={() => { setSelectedCouponId(''); setShowCouponModal(false) }} className={`p-3 rounded-xl border ${!selectedCouponId ? 'border-primary-500 bg-primary-50' : 'border-warm-200'}`}><p className="text-sm font-medium">不使用优惠券</p></div>
-              {coupons.map(c => (
-                <div key={c.id} onClick={() => { setSelectedCouponId(c.id); setShowCouponModal(false) }} className={`p-3 rounded-xl border ${selectedCouponId === c.id ? 'border-primary-500 bg-primary-50' : 'border-warm-200'}`}>
-                  <p className="text-sm font-medium">{c.name}</p>
-                  <p className="text-xs text-text-light mt-1">{c.description}</p>
-                </div>
-              ))}
+              <div onClick={() => setSelectedCouponIds([])} className={`p-3 rounded-xl border ${!selectedCoupons.length ? 'border-primary-500 bg-primary-50' : 'border-warm-200'}`}>
+                <p className="text-sm font-medium">不使用优惠券</p>
+              </div>
+              {coupons.map(c => {
+                const checked = selectedCouponIds.includes(c.id)
+                const notEnough = c.type === 'reduce' && itemsAmount < c.minAmount
+                return (
+                  <div
+                    key={c.id}
+                    onClick={() => !notEnough && toggleCoupon(c)}
+                    className={`p-3 rounded-xl border flex items-center gap-3 ${checked ? 'border-primary-500 bg-primary-50' : 'border-warm-200'} ${notEnough ? 'opacity-50' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${checked ? 'bg-primary-500 border-primary-500' : 'border-warm-400'}`}
+                    >
+                      {checked && <span className="text-white text-xs">✓</span>}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">
+                        {c.type === 'reduce' ? '¥' : ''}{c.value}{c.type === 'discount' ? '折' : ''} · {c.name}
+                        {c.stackable && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-600">可叠加</span>}
+                      </p>
+                      <p className="text-xs text-text-light mt-1">
+                        {c.minAmount > 0 ? `满${c.minAmount}元可用` : '无门槛'}
+                        {notEnough ? ' · 未达门槛' : ''}
+                        {' · '}有效期至 {c.endTime}
+                      </p>
+                    </div>
+                  </div>
+                )
+              })}
+              <button onClick={() => setShowCouponModal(false)} className="btn-primary w-full text-sm py-2">确定</button>
             </div>
           </div>
         </div>

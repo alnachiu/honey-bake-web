@@ -9,14 +9,13 @@ export default function CouponsPage() {
   const { user } = useAuth()
   const router = useRouter()
   const [coupons, setCoupons] = useState<any[]>([])
-  const [myCouponIds, setMyCouponIds] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
+  const [claimingId, setClaimingId] = useState('')
 
   useEffect(() => {
     if (!user) { router.push('/login'); return }
     fetchCoupons()
-    fetchMyCoupons()
   }, [user])
 
   const fetchCoupons = async () => {
@@ -28,15 +27,8 @@ export default function CouponsPage() {
     setLoading(false)
   }
 
-  const fetchMyCoupons = async () => {
-    try {
-      const res = await fetch('/api/coupons/claim')
-      const data = await res.json()
-      setMyCouponIds((data.coupons || []).map((c: any) => c.id))
-    } catch (err) { console.error(err) }
-  }
-
   const claimCoupon = async (couponId: string) => {
+    setClaimingId(couponId)
     try {
       const res = await fetch('/api/coupons/claim', {
         method: 'POST',
@@ -44,19 +36,24 @@ export default function CouponsPage() {
         body: JSON.stringify({ couponId })
       })
       const data = await res.json()
-      if (data.success) {
+      if (res.ok && data.success) {
         setMessage('🎉 领取成功！')
-        fetchMyCoupons()
+        await fetchCoupons()
       } else {
         setMessage(data.error || '领取失败')
       }
     } catch (err) {
       setMessage('领取失败')
     }
+    setClaimingId('')
     setTimeout(() => setMessage(''), 2000)
   }
 
-  const isClaimed = (id: string) => myCouponIds.includes(id)
+  /** 该券还剩几张可领（-1 = 不限量） */
+  const remainForMe = (c: any) =>
+    c.perUserLimit > 0 ? Math.max(0, c.perUserLimit - (c.myClaimCount || 0)) : -1
+
+  const isExhausted = (c: any) => c.soldOut || (c.perUserLimit > 0 && remainForMe(c) === 0)
 
   if (!user) return null
 
@@ -83,7 +80,7 @@ export default function CouponsPage() {
       ) : (
         <div className="space-y-3">
           {coupons.map(coupon => (
-            <div key={coupon.id} className={`card flex items-stretch overflow-hidden ${isClaimed(coupon.id) ? 'opacity-60' : ''}`}>
+            <div key={coupon.id} className={`card flex items-stretch overflow-hidden ${isExhausted(coupon) ? 'opacity-60' : ''}`}>
               <div className="w-28 bg-gradient-to-b from-primary-50 to-primary-100 flex flex-col items-center justify-center -ml-4 -my-4 rounded-r-2xl relative">
                 <div className="absolute -top-2 right-0 w-4 h-4 bg-[#FFFCF9] rounded-full" />
                 <div className="absolute -bottom-2 right-0 w-4 h-4 bg-[#FFFCF9] rounded-full" />
@@ -95,11 +92,34 @@ export default function CouponsPage() {
               <div className="flex-1 pl-4 flex flex-col justify-center">
                 <p className="text-sm font-semibold text-text-primary">{coupon.name}</p>
                 <p className="text-xs text-text-light mt-1">有效期至 {coupon.endTime}</p>
-                <div className="mt-2">
-                  {isClaimed(coupon.id) ? (
-                    <span className="text-xs text-text-light bg-warm-100 px-3 py-1 rounded-full">已领取</span>
+
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                  {coupon.stackable && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600">可叠加</span>
+                  )}
+                  {coupon.perUserLimit > 0 && (
+                    <span className="text-[10px] text-text-light">每人限领 {coupon.perUserLimit} 张</span>
+                  )}
+                </div>
+
+                <div className="mt-2 flex items-center gap-2">
+                  {coupon.soldOut ? (
+                    <span className="text-xs text-text-light bg-warm-100 px-3 py-1 rounded-full">已领完</span>
+                  ) : remainForMe(coupon) === 0 ? (
+                    <span className="text-xs text-text-light bg-warm-100 px-3 py-1 rounded-full">已领 {coupon.myClaimCount}/{coupon.perUserLimit}</span>
                   ) : (
-                    <button onClick={() => claimCoupon(coupon.id)} className="text-xs px-4 py-1.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white">立即领取</button>
+                    <>
+                      <button
+                        onClick={() => claimCoupon(coupon.id)}
+                        disabled={claimingId === coupon.id}
+                        className="text-xs px-4 py-1.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white disabled:opacity-60"
+                      >
+                        {claimingId === coupon.id ? '领取中...' : coupon.myClaimCount > 0 ? '再领一张' : '立即领取'}
+                      </button>
+                      {coupon.perUserLimit > 0 && (
+                        <span className="text-[10px] text-text-light">已领 {coupon.myClaimCount}/{coupon.perUserLimit}</span>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

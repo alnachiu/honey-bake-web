@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { signToken, setAuthCookie, hashPassword } from '@/lib/auth'
-import { generateOrderNo, calcDiscount } from '@/lib/utils'
+import { generateOrderNo } from '@/lib/utils'
 
 export async function POST(request: Request) {
   try {
     const data = await request.json()
-    const { name, phone, address, items, remark, couponId } = data
+    const { name, phone, address, items, remark } = data
 
     if (!name || !phone) {
       return NextResponse.json({ error: '请填写姓名和手机号' }, { status: 400 })
@@ -51,18 +51,10 @@ export async function POST(request: Request) {
     })
 
     const deliveryFee = itemsAmount >= 68 ? 0 : 5
-    let couponDiscount = 0
-    if (couponId) {
-      const coupon = await prisma.coupon.findUnique({ where: { id: couponId } })
-      if (coupon && coupon.status === 'active') {
-        const result = calcDiscount(itemsAmount, { type: coupon.type, value: coupon.value, minAmount: coupon.minAmount })
-        couponDiscount = result.discount
-        await prisma.userCoupon.updateMany({
-          where: { userId: user.id, couponId, status: 'active' },
-          data: { status: 'used', useTime: new Date() }
-        })
-      }
-    }
+
+    // 游客不使用优惠券：游客没有券包，此前这里会凭 couponId 直接给出折扣却不核销任何券
+    // （且按手机号查到的可能是他人账号，updateMany 会烧掉对方已领的券）。领券需先登录。
+    const couponDiscount = 0
 
     const totalAmount = Math.max(0, itemsAmount + deliveryFee - couponDiscount)
 
