@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getAuthUser, requireAdmin } from '@/lib/auth'
 
@@ -19,6 +20,37 @@ function validatePlan(raw: any):
   return { ok: true, data: { name, price, days, sort, active } }
 }
 
+/** 套餐绑定的「成为会员自动推送」券 id：去重去空 */
+function parseCouponIds(raw: any): string[] {
+  const list = Array.isArray(raw?.couponIds) ? raw.couponIds : []
+  return Array.from(new Set(list.filter(Boolean).map((v: any) => String(v))))
+}
+
+/**
+ * 券存在性校验，在事务外先做。
+ * 不这么做的话，勾了一张刚被别人删掉的券会写进一个查不到券的关联行，
+ * 店主看到「保存成功」却永远推不出东西来。
+ */
+async function couponIdsError(couponIds: string[]): Promise<string | null> {
+  if (!couponIds.length) return null
+  const found = await prisma.coupon.count({ where: { id: { in: couponIds } } })
+  return found === couponIds.length ? null : '有优惠券已被删除，请刷新后重新勾选'
+}
+
+/** 把套餐绑定的券整体同步成给定的这一批：先清后建，比逐条 diff 简单也不易漏 */
+async function syncPlanCoupons(
+  tx: Prisma.TransactionClient,
+  planId: string,
+  couponIds: string[]
+): Promise<void> {
+  await tx.membershipPlanCoupon.deleteMany({ where: { planId } })
+  if (couponIds.length) {
+    await tx.membershipPlanCoupon.createMany({
+      data: couponIds.map(couponId => ({ planId, couponId }))
+    })
+  }
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -30,7 +62,11 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: '权限不足' }, { status: 403 })
       }
 
-      const plans = await prisma.membershipPlan.findMany({ orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }] })
+      const plans = await prisma.membershipPlan.findMany({
+        orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
+        // 供后台套餐表单回显「成为会员自动推送」勾了哪些券
+        include: { giftCoupons: { select: { couponId: true } } }
+      })
 
       // 每个套餐卖出了多少张——删除前要据此判断能不能删
       const grouped = await prisma.membershipOrder.groupBy({
@@ -42,7 +78,11 @@ export async function GET(request: Request) {
       )
 
       return NextResponse.json({
-        plans: plans.map(p => ({ ...p, soldCount: soldCount[p.id] || 0 }))
+        plans: plans.map(({ giftCoupons, ...p }) => ({
+          ...p,
+          soldCount: soldCount[p.id] || 0,
+          couponIds: giftCoupons.map(g => g.couponId)
+        }))
       })
     }
 
@@ -61,12 +101,24 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     await requireAdmin()
-    const validated = validatePlan(await request.json())
+    const raw = await request.json()
+
+    const validated = validatePlan(raw)
     if (!validated.ok) {
       return NextResponse.json({ error: validated.error }, { status: 400 })
     }
-    const plan = await prisma.membershipPlan.create({ data: validated.data })
-    return NextResponse.json({ plan })
+
+    const couponIds = parseCouponIds(raw)
+    const badCoupon = await couponIdsError(couponIds)
+    if (badCoupon) return NextResponse.json({ error: badCoupon }, { status: 400 })
+
+    const plan = await prisma.$transaction(async tx => {
+      const created = await tx.membershipPlan.create({ data: validated.data })
+      await syncPlanCoupons(tx, created.id, couponIds)
+      return created
+    })
+
+    return NextResponse.json({ plan: { ...plan, couponIds } })
   } catch (error: any) {
     console.error('Create membership plan error:', error)
     return NextResponse.json({ error: error.message || '创建套餐失败' }, { status: 500 })
@@ -88,9 +140,19 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: validated.error }, { status: 400 })
     }
 
-    // 改价不影响已下单未确认的记录：那些单子存的是下单时的价格快照
-    const plan = await prisma.membershipPlan.update({ where: { id }, data: validated.data })
-    return NextResponse.json({ plan })
+    const couponIds = parseCouponIds(raw)
+    const badCoupon = await couponIdsError(couponIds)
+    if (badCoupon) return NextResponse.json({ error: badCoupon }, { status: 400 })
+
+    const plan = await prisma.$transaction(async tx => {
+      // 改价不影响已下单未确认的记录：那些单子存的是下单时的价格快照
+      const updated = await tx.membershipPlan.update({ where: { id }, data: validated.data })
+      // 套餐字段与绑定的券一起改：只改一半会让「保存成功」变成一句空话
+      await syncPlanCoupons(tx, id, couponIds)
+      return updated
+    })
+
+    return NextResponse.json({ plan: { ...plan, couponIds } })
   } catch (error: any) {
     console.error('Update membership plan error:', error)
     return NextResponse.json({ error: error.message || '保存失败' }, { status: 500 })

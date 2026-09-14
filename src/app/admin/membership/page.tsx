@@ -2,9 +2,19 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { formatDate, couponValidityText, isValidPhone } from '@/lib/utils'
+import { formatDate, couponValidityText, isValidPhone, couponAmountLabel, couponValueText } from '@/lib/utils'
 
 const TABS = ['💳 套餐与折扣', '🎫 推送优惠券', '👥 会员数据', '📋 购买订单'] as const
+
+/** 套餐表单初值。couponIds 是「成为会员后自动推送」的那批券 */
+const EMPTY_PLAN_FORM = {
+  name: '',
+  price: '',
+  days: '',
+  sort: '0',
+  active: true,
+  couponIds: [] as string[]
+}
 
 const ORDER_STATUS: Record<string, { text: string; cls: string }> = {
   pending: { text: '待确认收款', cls: 'text-amber-500' },
@@ -18,7 +28,7 @@ export default function AdminMembershipPage() {
   const [loading, setLoading] = useState(true)
 
   const [plans, setPlans] = useState<any[]>([])
-  const [planForm, setPlanForm] = useState({ name: '', price: '', days: '', sort: '0', active: true })
+  const [planForm, setPlanForm] = useState(EMPTY_PLAN_FORM)
   const [editingPlanId, setEditingPlanId] = useState('')
   const [planSaving, setPlanSaving] = useState(false)
 
@@ -124,12 +134,14 @@ export default function AdminMembershipPage() {
           price: parseFloat(planForm.price || '0'),
           days: parseInt(planForm.days || '0', 10),
           sort: parseInt(planForm.sort || '0', 10),
-          active: planForm.active
+          active: planForm.active,
+          // 成为会员后自动推送的券。服务端会整体同步（先清后建）
+          couponIds: planForm.couponIds
         })
       })
       const data = await res.json()
       if (res.ok) {
-        setPlanForm({ name: '', price: '', days: '', sort: '0', active: true })
+        setPlanForm(EMPTY_PLAN_FORM)
         setEditingPlanId('')
         await fetchPlans()
         toast(editingPlanId ? '套餐已更新' : '套餐已创建')
@@ -147,7 +159,18 @@ export default function AdminMembershipPage() {
       price: String(p.price),
       days: String(p.days),
       sort: String(p.sort || 0),
-      active: p.active
+      active: p.active,
+      couponIds: p.couponIds || []
+    })
+  }
+
+  /** 勾选/取消一张「成为会员自动推送」的券 */
+  const togglePlanCoupon = (couponId: string) => {
+    setPlanForm(p => {
+      const next = new Set(p.couponIds)
+      if (next.has(couponId)) next.delete(couponId)
+      else next.add(couponId)
+      return { ...p, couponIds: Array.from(next) }
     })
   }
 
@@ -214,7 +237,14 @@ export default function AdminMembershipPage() {
       const data = await res.json()
       if (res.ok) {
         await Promise.all([fetchOrders(), fetchMembers()])
-        toast(action === 'confirm' ? '已确认收款并开通会员' : '订单已取消')
+        if (action !== 'confirm') {
+          toast('订单已取消')
+        } else {
+          // 套餐绑了券的话，开通的同时已经把券推进会员券包了，顺手告知张数
+          toast(data.pushedCoupons > 0
+            ? `已开通会员，并推送 ${data.pushedCoupons} 张优惠券`
+            : '已确认收款并开通会员')
+        }
       } else {
         alert(data.error || '操作失败')
       }
@@ -323,10 +353,52 @@ export default function AdminMembershipPage() {
                   </button>
                 </div>
               </div>
+              {/* 成为会员后自动推送的券。勾几张就发几张，续费也再发一遍（不去重） */}
+              <div className="border-t border-warm-100 pt-3">
+                <p className="text-sm text-text-primary">成为会员自动推送的优惠券</p>
+                <p className="text-[10px] text-text-light mt-0.5 mb-2">
+                  每次确认收款（开通或续费）都会把勾选的券推进会员券包，续费不去重。
+                  已过有效期或已下架的券不会被推送。
+                </p>
+                {coupons.length === 0 ? (
+                  <p className="text-[10px] text-text-light py-2">还没有优惠券，可先去「🎫 优惠券管理」创建</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                    {coupons.map(c => {
+                      const checked = planForm.couponIds.includes(c.id)
+                      return (
+                        <div
+                          key={c.id}
+                          onClick={() => togglePlanCoupon(c.id)}
+                          className="flex items-center gap-2.5 py-1.5 cursor-pointer"
+                        >
+                          <button
+                            type="button"
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${checked ? 'bg-primary-500 border-primary-500' : 'border-warm-400'}`}
+                          >
+                            {checked && <span className="text-white text-xs">✓</span>}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-text-primary truncate">
+                              {couponAmountLabel(c)} · {c.name}
+                              {c.visible === false && <span className="ml-1 text-[10px] text-purple-500">🙈 隐藏</span>}
+                            </p>
+                            <p className="text-[10px] text-text-light truncate">{couponValueText(c)}</p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                {planForm.couponIds.length > 0 && (
+                  <p className="text-[10px] text-primary-500 mt-1.5">已选 {planForm.couponIds.length} 张</p>
+                )}
+              </div>
+
               <div className="flex gap-2">
                 {editingPlanId && (
                   <button
-                    onClick={() => { setEditingPlanId(''); setPlanForm({ name: '', price: '', days: '', sort: '0', active: true }) }}
+                    onClick={() => { setEditingPlanId(''); setPlanForm(EMPTY_PLAN_FORM) }}
                     className="flex-1 py-2 rounded-xl border border-warm-200 text-sm text-text-secondary"
                   >
                     取消编辑
@@ -352,7 +424,12 @@ export default function AdminMembershipPage() {
                     </span>
                   </div>
                   <p className="text-xs text-text-light mt-0.5">¥{p.price.toFixed(2)} / {p.days} 天</p>
-                  <p className="text-[10px] text-text-light mt-0.5">已售 {p.soldCount || 0} 张</p>
+                  <p className="text-[10px] text-text-light mt-0.5">
+                    已售 {p.soldCount || 0} 张
+                    {(p.couponIds?.length || 0) > 0 && (
+                      <span className="ml-1.5 text-amber-600">· 💎 开通送 {p.couponIds.length} 张券</span>
+                    )}
+                  </p>
                 </div>
                 <div className="flex flex-col gap-1.5 flex-shrink-0">
                   <button onClick={() => editPlan(p)} className="text-[10px] px-2.5 py-1 rounded-full border border-primary-200 text-primary-500">编辑</button>
@@ -383,12 +460,14 @@ export default function AdminMembershipPage() {
           ) : coupons.map(c => (
             <div key={c.id} className="card flex items-center gap-3">
               <div className="w-14 h-14 bg-primary-50 rounded-xl flex items-center justify-center flex-shrink-0">
-                <span className="text-base font-bold text-primary-500">
-                  {c.type === 'reduce' ? '¥' : ''}{c.value}{c.type === 'discount' ? '折' : ''}
-                </span>
+                <span className="text-base font-bold text-primary-500">{couponAmountLabel(c)}</span>
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-text-primary">{c.name}</p>
+                <p className="text-sm font-medium text-text-primary">
+                  {c.name}
+                  {c.visible === false && <span className="ml-1 text-[10px] text-purple-500">🙈 隐藏</span>}
+                </p>
+                <p className="text-[10px] text-text-light mt-0.5">{couponValueText(c)}</p>
                 <p className="text-[10px] text-text-light mt-0.5">{couponValidityText(c)}</p>
                 <p className="text-[10px] text-text-light mt-0.5">已领 {c.claimed}{c.stock > 0 ? ` / ${c.stock}` : ''}</p>
               </div>
@@ -538,8 +617,8 @@ export default function AdminMembershipPage() {
             <div className="bg-warm-50 rounded-xl p-3 mb-3">
               <p className="text-sm font-medium text-text-primary">{pushCoupon.name}</p>
               <p className="text-xs text-text-light mt-1">
-                {pushCoupon.type === 'discount' ? `${pushCoupon.value} 折` : `满 ${pushCoupon.minAmount} 减 ${pushCoupon.value}`}
-                {pushCoupon.minAmount > 0 ? '' : ' · 无门槛'}
+                {couponValueText(pushCoupon)}
+                {pushCoupon.type !== 'gift' && (pushCoupon.minAmount > 0 ? '' : ' · 无门槛')}
               </p>
               <p className="text-[10px] text-text-light mt-1">{couponValidityText(pushCoupon)}</p>
             </div>

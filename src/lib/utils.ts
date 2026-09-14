@@ -134,6 +134,168 @@ export function couponValidityText(c: {
   return ''
 }
 
+/** 券的短标签，用在券面那个小方块上 */
+export function couponAmountLabel(c: { type: string; value: number }): string {
+  if (c.type === 'gift') return '🎁'
+  if (c.type === 'discount') return `${c.value}折`
+  return `¥${c.value}`
+}
+
+/**
+ * 券的完整说明文案，用在通知正文与列表副标题。
+ * 以前这段是按 type 二分的三元式散在各处，加了买赠券之后会渲染成「满 0 减 0」。
+ */
+export function couponValueText(c: {
+  type: string
+  value: number
+  minAmount?: number
+  giftName?: string
+  giftQuantity?: number
+}): string {
+  if (c.type === 'gift') {
+    return c.giftName ? `送${c.giftName} ×${c.giftQuantity || 0}` : '赠品券'
+  }
+  if (c.type === 'discount') return `${c.value} 折`
+  return (c.minAmount || 0) > 0 ? `满 ${c.minAmount} 减 ${c.value}` : `立减 ${c.value} 元`
+}
+
+/** 买赠券带的赠品；非买赠券或赠品信息不全时返回 null */
+export function giftFromCoupon(c: {
+  type?: string
+  giftName?: string
+  giftQuantity?: number
+} | null | undefined): { giftName: string; giftQuantity: number } | null {
+  if (!c || c.type !== 'gift') return null
+  const name = (c.giftName || '').trim()
+  const quantity = Number(c.giftQuantity)
+  if (!name || !Number.isInteger(quantity) || quantity < 1) return null
+  return { giftName: name, giftQuantity: quantity }
+}
+
+export const PERIOD_TYPES = ['day', 'week', 'month'] as const
+
+const PERIOD_LABEL: Record<string, string> = { day: '每天', week: '每周', month: '每月' }
+
+/**
+ * 自然周期的起点（本地时区）：day = 当天 00:00，week = 本周一 00:00，month = 本月 1 号 00:00。
+ * 用本地时间构造而不是解析字符串，避免时区换算把周期边界挪到前一天。
+ */
+export function periodStart(periodType: string, now: Date = new Date()): Date | null {
+  if (periodType === 'day') return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  if (periodType === 'week') {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7)) // 让周一成为一周的第一天
+    return d
+  }
+  if (periodType === 'month') return new Date(now.getFullYear(), now.getMonth(), 1)
+  return null
+}
+
+export interface CouponLimitConfig {
+  perUserLimit?: number
+  rollingDays?: number
+  rollingLimit?: number
+  periodType?: string
+  periodCount?: number
+}
+
+export interface ClaimLimitState {
+  /** 该用户在这张券上一共领过几张 */
+  totalCount: number
+  /** 滚动窗口（最近 N 天）内领过几张 */
+  windowCount: number
+  /** 当前自然周期内领过几张 */
+  periodUsed: number
+  blocked: boolean
+  /** blocked 时给用户看的原因；未触限时为空串 */
+  reason: string
+  /** 所有启用的规则里最紧的那条还剩几张；一条都没启用时返回 -1（不限） */
+  remain: number
+}
+
+const toCount = (v: unknown): number => {
+  const n = Number(v)
+  return Number.isInteger(n) && n > 0 ? n : 0
+}
+
+/**
+ * 领取限制的唯一判定入口：领取接口（拦不拦）与列表接口（还剩几张）共用，
+ * 避免两边各写一套算法后悄悄漂移——这正是 calcOrderAmount 当初被抽出来的理由。
+ *
+ * 三条规则可同时启用，互不覆盖：
+ *   ① perUserLimit  总量上限（不限时间）
+ *   ② rollingDays + rollingLimit  滚动窗口：最近 N 天内最多 M 张
+ *   ③ periodType + periodCount    自然周期：每天/每周/每月最多 K 张
+ */
+export function evaluateClaimLimits(
+  coupon: CouponLimitConfig,
+  claimTimes: (string | Date)[] | null | undefined,
+  now: Date = new Date()
+): ClaimLimitState {
+  const times = (claimTimes || [])
+    .map(t => new Date(t).getTime())
+    .filter(t => Number.isFinite(t))
+  const totalCount = times.length
+
+  const perUserLimit = toCount(coupon.perUserLimit)
+  const rollingDays = toCount(coupon.rollingDays)
+  const rollingLimit = toCount(coupon.rollingLimit)
+  const periodType = (PERIOD_TYPES as readonly string[]).includes(coupon.periodType || '')
+    ? (coupon.periodType as string)
+    : 'none'
+  const periodCount = toCount(coupon.periodCount)
+
+  const windowStart = rollingDays ? now.getTime() - rollingDays * 86400000 : 0
+  const windowCount = rollingDays ? times.filter(t => t >= windowStart).length : 0
+
+  const pStart = periodStart(periodType, now)
+  const periodUsed = pStart ? times.filter(t => t >= pStart.getTime()).length : 0
+
+  const remainders: number[] = []
+  if (perUserLimit) remainders.push(perUserLimit - totalCount)
+  if (rollingDays && rollingLimit) remainders.push(rollingLimit - windowCount)
+  if (pStart && periodCount) remainders.push(periodCount - periodUsed)
+
+  let blocked = false
+  let reason = ''
+  if (perUserLimit && totalCount >= perUserLimit) {
+    blocked = true
+    reason = `每人最多可领取 ${perUserLimit} 张，您已领完`
+  } else if (rollingDays && rollingLimit && windowCount >= rollingLimit) {
+    blocked = true
+    reason = `最近 ${rollingDays} 天内最多可领取 ${rollingLimit} 张，您已领完`
+  } else if (pStart && periodCount && periodUsed >= periodCount) {
+    blocked = true
+    reason = `${PERIOD_LABEL[periodType] || ''}最多可领取 ${periodCount} 张，您已领完`
+  }
+
+  return {
+    totalCount,
+    windowCount,
+    periodUsed,
+    blocked,
+    reason,
+    remain: remainders.length ? Math.max(0, Math.min(...remainders)) : -1
+  }
+}
+
+/** 券卡片上那行限领说明，只拼启用了的规则 */
+export function claimLimitHint(coupon: CouponLimitConfig): string {
+  const parts: string[] = []
+  const perUserLimit = toCount(coupon.perUserLimit)
+  const rollingDays = toCount(coupon.rollingDays)
+  const rollingLimit = toCount(coupon.rollingLimit)
+  const periodType = (PERIOD_TYPES as readonly string[]).includes(coupon.periodType || '')
+    ? (coupon.periodType as string)
+    : 'none'
+  const periodCount = toCount(coupon.periodCount)
+
+  if (perUserLimit) parts.push(`每人限领 ${perUserLimit} 张`)
+  if (rollingDays && rollingLimit) parts.push(`每 ${rollingDays} 天限领 ${rollingLimit} 张`)
+  if (periodType !== 'none' && periodCount) parts.push(`${PERIOD_LABEL[periodType]}限领 ${periodCount} 张`)
+  return parts.join(' · ')
+}
+
 export interface OrderAmountInput {
   itemsAmount: number
   coupons?: CouponLike[] | null
@@ -207,6 +369,9 @@ export interface CouponLike {
   value: number
   minAmount: number
   stackable?: boolean
+  /** 仅 type=gift 用：赠品名称与数量（决定订单上那个赠品，不参与算钱） */
+  giftName?: string
+  giftQuantity?: number
 }
 
 /**
@@ -215,6 +380,10 @@ export interface CouponLike {
  *   ① 满减券按【原始商品金额】判断门槛，多张额度累加，且减免总额不超过商品金额；
  *   ② 折扣券在满减后的金额上依次相乘。
  * 未达门槛的满减券不产生优惠，调用方应据此剔除，避免白白核销。
+ *
+ * 买赠券（type=gift）在这里**恒为 0 优惠**——它只往订单上挂赠品、不改金额，
+ * 所以下面两个分支都碰不到它。也正因如此，调用方不能用「有无金额优惠」来决定
+ * 它是否生效，得单独判（见 lib/coupons.ts 的 resolveUserCoupons）。
  */
 export function calcCouponsDiscount(
   itemsAmount: number,

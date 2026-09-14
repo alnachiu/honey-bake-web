@@ -88,6 +88,15 @@ export default function OrdersPage() {
                     <span className="text-sm text-text-primary">¥{(item.price * item.quantity).toFixed(2)}</span>
                   </div>
                 ))}
+                {/* 买赠券带来的赠品，随单配送、不计金额 */}
+                {order.giftName && order.giftQuantity > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="w-8 h-8 rounded-lg bg-primary-50 flex items-center justify-center text-sm flex-shrink-0">🎁</span>
+                    <span className="text-sm text-text-primary flex-1 truncate">{order.giftName}</span>
+                    <span className="text-xs text-text-light">x{order.giftQuantity}</span>
+                    <span className="text-xs text-primary-500">赠品</span>
+                  </div>
+                )}
               </div>
               <div className="flex justify-between items-center mt-3 pt-2 border-t border-warm-100">
                 <span className="text-xs text-text-light">{new Date(order.createdAt).toLocaleString('zh-CN')}</span>

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCart } from '@/components/CartProvider'
-import { calcOrderAmount, couponExpireText, isMemberActive, isValidPhone } from '@/lib/utils'
+import { calcOrderAmount, couponExpireText, isMemberActive, isValidPhone, couponAmountLabel, couponValueText, giftFromCoupon } from '@/lib/utils'
 
 export default function CheckoutPage() {
   const router = useRouter()
@@ -132,11 +132,20 @@ export default function CheckoutPage() {
     memberDiscountRate: isMember ? memberRate : 1
   })
 
+  /** 已选中的买赠券带的赠品；订单上只挂一个（服务端也只允许一张买赠券） */
+  const selectedGift = giftFromCoupon(selectedCoupons.find(c => c.type === 'gift'))
+
   // 多选券时维持叠加规则：两张券必须都允许叠加才能同时选中
   const toggleCoupon = (coupon: any) => {
     setSelectedCouponIds(prev => {
       if (prev.includes(coupon.userCouponId)) return prev.filter(id => id !== coupon.userCouponId)
       const others = coupons.filter(c => prev.includes(c.userCouponId))
+      // 一次下单最多一张买赠券——订单上只记一个赠品，服务端也会拦，
+      // 这里提前拦是为了别让用户点了半天才在提交时报错
+      if (coupon.type === 'gift' && others.some(c => c.type === 'gift')) {
+        alert('一次下单最多使用一张买赠券')
+        return prev
+      }
       if (others.length && (!coupon.stackable || others.some(c => !c.stackable))) {
         alert('该优惠券不可与其他优惠券叠加使用，请先取消已选中的券')
         return prev
@@ -312,7 +321,10 @@ export default function CheckoutPage() {
               <span className="text-sm text-primary-500">
                 {couponDiscount > 0
                   ? `-¥${couponDiscount.toFixed(2)}${selectedCoupons.length > 1 ? ` (${selectedCoupons.length}张)` : ''}`
-                  : coupons.length ? '选择 ›' : '暂无可用'}
+                  : selectedGift
+                    // 买赠券不产生金额优惠，不特判的话选了券这里还显示「选择 ›」，看着像没生效
+                    ? `🎁 ${selectedGift.giftName} ×${selectedGift.giftQuantity}`
+                    : coupons.length ? '选择 ›' : '暂无可用'}
               </span>
             </div>
           </div>
@@ -328,6 +340,13 @@ export default function CheckoutPage() {
           <div className="flex justify-between text-sm"><span className="text-text-secondary">商品金额</span><span>¥{itemsAmount.toFixed(2)}</span></div>
           <div className="flex justify-between text-sm"><span className="text-text-secondary">配送费</span><span>{deliveryFee === 0 ? '免运费' : `¥${deliveryFee.toFixed(2)}`}</span></div>
           {couponDiscount > 0 && <div className="flex justify-between text-sm"><span className="text-text-secondary">优惠券</span><span className="text-primary-500">-¥{couponDiscount.toFixed(2)}</span></div>}
+          {/* 赠品不抵扣金额，所以不进上面的优惠券行，单独列一行让人知道要随单发什么 */}
+          {selectedGift && (
+            <div className="flex justify-between text-sm">
+              <span className="text-text-secondary">🎁 赠品</span>
+              <span className="text-primary-500">{selectedGift.giftName} ×{selectedGift.giftQuantity}（随单配送）</span>
+            </div>
+          )}
           {memberDiscount > 0 && (
             <div className="flex justify-between text-sm">
               <span className="text-text-secondary">💎 会员折扣</span>
@@ -404,7 +423,9 @@ export default function CheckoutPage() {
               </div>
               {coupons.map(c => {
                 const checked = selectedCouponIds.includes(c.userCouponId)
-                const notEnough = c.type === 'reduce' && itemsAmount < c.minAmount
+                // 门槛不够就置灰，三种类型一致。此前只判 reduce，
+                // 带门槛的折扣券和买赠券都能被点中，下单时才发现用不了
+                const notEnough = c.minAmount > 0 && itemsAmount < c.minAmount
                 return (
                   <div
                     key={c.userCouponId}
@@ -419,11 +440,13 @@ export default function CheckoutPage() {
                     </button>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">
-                        {c.type === 'reduce' ? '¥' : ''}{c.value}{c.type === 'discount' ? '折' : ''} · {c.name}
+                        {couponAmountLabel(c)} · {c.name}
                         {c.stackable && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-600">可叠加</span>}
                       </p>
                       <p className="text-xs text-text-light mt-1">
-                        {c.minAmount > 0 ? `满${c.minAmount}元可用` : '无门槛'}
+                        {c.type === 'gift'
+                          ? `${couponValueText(c)} · 需同时购买其他商品`
+                          : c.minAmount > 0 ? `满${c.minAmount}元可用` : '无门槛'}
                         {notEnough ? ' · 未达门槛' : ''}
                         {' · '}{couponExpireText(c)}
                       </p>

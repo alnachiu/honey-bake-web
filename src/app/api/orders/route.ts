@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
-import { generateOrderNo, calcOrderAmount } from '@/lib/utils'
+import { generateOrderNo, calcOrderAmount, giftFromCoupon } from '@/lib/utils'
 import { resolveUserCoupons } from '@/lib/coupons'
 import { getMemberDiscountRate } from '@/lib/membership'
 
@@ -64,14 +64,23 @@ export async function POST(request: Request) {
       }
     })
 
-    // 校验并计算优惠券（归属 / 有效期 / 叠加规则）。
+    // 校验并计算优惠券（归属 / 有效期 / 叠加规则 / 买赠券的硬规则）。
     // 传的是 UserCoupon.id（用户券包中那一张），不是券模板 id。
     const userCouponIds: string[] = Array.isArray(data.userCouponIds) ? data.userCouponIds : []
 
-    const resolved = await resolveUserCoupons(user.id, userCouponIds, itemsAmount)
+    // hasNormalItems：订单里有没有正常商品。买赠券的硬规则靠它判，
+    // 不能用 itemsAmount > 0 代替——0 元商品的订单金额也是 0。
+    // 上面的「订单不能为空」已经保证了非空，这里显式传下去是为了让规则本身
+    // 不依赖那个前置校验（哪天校验放松了，买赠券的拦截还在）。
+    const resolved = await resolveUserCoupons(user.id, userCouponIds, itemsAmount, orderItems.length > 0)
     if (!resolved.ok) {
       return NextResponse.json({ error: resolved.error }, { status: 400 })
     }
+
+    // 赠品由**服务端**按券上配置的赠品名与数量推导，不接受前端传：
+    // 这个路由对商品价格/名称是全信前端的，赠品再让前端传就等于白送任意东西。
+    // 买赠券一次最多一张（resolveUserCoupons 已拦），所以取第一个就够。
+    const gift = giftFromCoupon(resolved.coupons.find(c => c.type === 'gift'))
 
     // 会员折扣率只在有效期内生效；非会员恒为 1（不打折）
     const memberDiscountRate = await getMemberDiscountRate(user.memberExpire)
@@ -122,6 +131,9 @@ export async function POST(request: Request) {
           itemsAmount,
           couponDiscount,
           memberDiscount,
+          // 随单配送的赠品，不参与金额计算（itemsAmount / totalAmount 都不含它）
+          giftName: gift?.giftName || '',
+          giftQuantity: gift?.giftQuantity || 0,
           remark: data.remark || '',
           addressId,
           status: 'pending'

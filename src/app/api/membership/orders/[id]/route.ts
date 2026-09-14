@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth'
 import { extendMemberExpire, formatDate } from '@/lib/utils'
+import { grantCouponsToUsers, isCouponInWindow } from '@/lib/coupons'
 
 /**
  * 管理员处理会员卡购买单：
@@ -63,7 +64,26 @@ export async function PUT(request: Request) {
         }
       })
 
-      return { order: updatedOrder, memberExpire: updatedUser.memberExpire }
+      // 会员卡绑定的赠券自动到账。
+      // 只推「还在发放期」的券：套餐绑定是长期配置，绑的券可能早就下架或过了有效期，
+      // 那种券推过去也用不了，不如不推。一张都没有就安静跳过。
+      // 放在同一个事务里 —— 开通与发券要么都成、要么都不成。
+      const bound = await tx.membershipPlanCoupon.findMany({
+        where: { planId: order.planId },
+        include: { coupon: true }
+      })
+      const pushable = bound
+        .map(b => b.coupon)
+        .filter(c => c.status === 'active' && isCouponInWindow(c))
+
+      // 按店主的要求续费也发、不去重：每次确认收款都再发一遍
+      const { perUser: pushedCoupons } = await grantCouponsToUsers(
+        tx,
+        [order.userId],
+        pushable
+      )
+
+      return { order: updatedOrder, memberExpire: updatedUser.memberExpire, pushedCoupons }
     })
 
     return NextResponse.json(result)

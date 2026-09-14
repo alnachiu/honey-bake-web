@@ -18,9 +18,11 @@ export async function GET(request: Request) {
     })
 
     // Generate CSV
-    const headers = ['订单编号', '下单时间', '客户姓名', '手机号', '收货地址', '商品', '金额', '配送费', '优惠券', '实付', '状态', '备注']
+    const headers = ['订单编号', '下单时间', '客户姓名', '手机号', '收货地址', '商品', '赠品', '金额', '配送费', '优惠券', '实付', '状态', '备注']
     const rows = orders.map(o => {
       const items = o.items.map(i => `${i.name}x${i.quantity}`).join('; ')
+      // 买赠券带来的赠品，单独一列——它不在 items 里（不关联商品、不计金额）
+      const gift = o.giftName && o.giftQuantity > 0 ? `${o.giftName}x${o.giftQuantity}` : ''
       const address = o.address ? `${o.address.region} ${o.address.detail}` : ''
       const statusMap: Record<string, string> = { pending: '待付款', paid: '已付款', making: '制作中', delivering: '配送中', completed: '已完成', cancelled: '已取消' }
       return [
@@ -30,6 +32,7 @@ export async function GET(request: Request) {
         o.address?.phone || o.user?.phone || '',
         address,
         items,
+        gift,
         o.itemsAmount.toFixed(2),
         o.deliveryFee.toFixed(2),
         o.couponDiscount > 0 ? `-${o.couponDiscount.toFixed(2)}` : '0',

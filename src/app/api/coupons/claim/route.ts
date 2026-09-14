@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
+import { evaluateClaimLimits } from '@/lib/utils'
 import { isCouponInWindow, userCouponExpireAt, isUserCouponUsable } from '@/lib/coupons'
 
 export async function POST(request: Request) {
@@ -26,18 +27,29 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '该优惠券不在可领取时间内' }, { status: 400 })
     }
 
+    // 隐藏券只能由店主在后台推送，不能自助领取。
+    // 列表接口已经把它藏起来了，但那是前端遮羞布——不在这里再拦一道，
+    // 直接 POST 券 id 照样能领到。
+    if (!coupon.visible) {
+      return NextResponse.json(
+        { error: '该优惠券需要由管理员推送，无法自行领取' },
+        { status: 400 }
+      )
+    }
+
     // 库存校验
     if (coupon.stock > 0 && coupon.claimed >= coupon.stock) {
       return NextResponse.json({ error: '优惠券已领完' }, { status: 400 })
     }
 
-    // 每人限领校验（perUserLimit = 0 表示不限量）
-    const myCount = await prisma.userCoupon.count({ where: { userId: user.id, couponId } })
-    if (coupon.perUserLimit > 0 && myCount >= coupon.perUserLimit) {
-      return NextResponse.json(
-        { error: `每人最多可领取 ${coupon.perUserLimit} 张，您已领完` },
-        { status: 400 }
-      )
+    // 限领校验：总量 / 滚动窗口 / 自然周期三条规则都在这里判，与列表接口共用同一份实现
+    const claimTimes = await prisma.userCoupon.findMany({
+      where: { userId: user.id, couponId },
+      select: { claimTime: true }
+    })
+    const limit = evaluateClaimLimits(coupon, claimTimes.map(t => t.claimTime))
+    if (limit.blocked) {
+      return NextResponse.json({ error: limit.reason }, { status: 400 })
     }
 
     // 领取与计数自增放在同一事务，避免计数漂移
@@ -58,11 +70,15 @@ export async function POST(request: Request) {
       })
     ])
 
-    const claimedNow = myCount + 1
+    // 领完这一张之后的状态：把新领的这张算进去重算一次，免得前端自己推
+    const after = evaluateClaimLimits(coupon, [
+      ...claimTimes.map(t => t.claimTime),
+      new Date()
+    ])
     return NextResponse.json({
       success: true,
-      myClaimCount: claimedNow,
-      remainForMe: coupon.perUserLimit > 0 ? Math.max(0, coupon.perUserLimit - claimedNow) : -1
+      myClaimCount: after.totalCount,
+      remainForMe: after.remain
     })
   } catch (error: any) {
     return NextResponse.json({ error: error.message || '领取失败' }, { status: 500 })

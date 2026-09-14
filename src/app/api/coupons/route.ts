@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getAuthUser, requireAdmin } from '@/lib/auth'
-import { normalizeDateTime } from '@/lib/utils'
+import { PERIOD_TYPES, evaluateClaimLimits, normalizeDateTime } from '@/lib/utils'
 import { isCouponInWindow } from '@/lib/coupons'
+
+/** 券类型的白名单。买赠券必须在这里，否则下面的归一化会把它静默改写成满减券。 */
+const COUPON_TYPES = ['reduce', 'discount', 'gift']
 
 interface CouponInput {
   name: string
@@ -17,6 +20,13 @@ interface CouponInput {
   endTime: string
   validDays: number
   description: string
+  giftName: string
+  giftQuantity: number
+  visible: boolean
+  rollingDays: number
+  rollingLimit: number
+  periodType: string
+  periodCount: number
 }
 
 type ValidateResult = { ok: true; data: CouponInput } | { ok: false; error: string }
@@ -26,8 +36,7 @@ function validateCouponInput(raw: any): ValidateResult {
   const fail = (error: string): ValidateResult => ({ ok: false, error })
 
   const name = String(raw?.name || '').trim()
-  const type = raw?.type === 'discount' ? 'discount' : 'reduce'
-  const value = parseFloat(raw?.value)
+  const type = COUPON_TYPES.includes(raw?.type) ? (raw.type as string) : 'reduce'
   const minAmount = parseFloat(raw?.minAmount ?? '0')
   const stock = parseInt(raw?.stock ?? '0', 10)
   const perUserLimit = parseInt(raw?.perUserLimit ?? '1', 10)
@@ -35,13 +44,46 @@ function validateCouponInput(raw: any): ValidateResult {
   const validMode = raw?.validMode === 'relative' ? 'relative' : 'fixed'
   const validDays = parseInt(raw?.validDays ?? '0', 10)
   const description = String(raw?.description || '')
+  const visible = raw?.visible !== false
 
   if (!name) return fail('请填写优惠券名称')
-  if (!Number.isFinite(value) || value <= 0) return fail('优惠额度必须大于 0')
-  if (type === 'discount' && value >= 10) return fail('折扣力度需小于 10 折（如 9 表示九折）')
   if (!Number.isFinite(minAmount) || minAmount < 0) return fail('最低消费不能为负数')
   if (!Number.isInteger(stock) || stock < 0) return fail('库存不能为负数')
   if (!Number.isInteger(perUserLimit) || perUserLimit < 0) return fail('每人限领数量不能为负数')
+
+  // 额度与赠品：买赠券不产生金额优惠，value 固定为 0，改校验赠品信息
+  let value = parseFloat(raw?.value)
+  let giftName = ''
+  let giftQuantity = 0
+  if (type === 'gift') {
+    value = 0
+    giftName = String(raw?.giftName || '').trim()
+    giftQuantity = parseInt(raw?.giftQuantity ?? '0', 10)
+    if (!giftName) return fail('请填写赠品名称')
+    if (!Number.isInteger(giftQuantity) || giftQuantity < 1) return fail('赠品数量需为大于 0 的整数')
+  } else {
+    if (!Number.isFinite(value) || value <= 0) return fail('优惠额度必须大于 0')
+    if (type === 'discount' && value >= 10) return fail('折扣力度需小于 10 折（如 9 表示九折）')
+  }
+
+  // 领取限制的时间维度。两种都可关闭（填 0），启用时必须成对出现，
+  // 否则会落进「设了窗口却永远拦不住」或「设了张数却没有窗口可算」的歧义里。
+  const rollingDays = parseInt(raw?.rollingDays ?? '0', 10)
+  const rollingLimit = parseInt(raw?.rollingLimit ?? '0', 10)
+  if (!Number.isInteger(rollingDays) || rollingDays < 0) return fail('滚动限领天数不能为负数')
+  if (!Number.isInteger(rollingLimit) || rollingLimit < 0) return fail('滚动限领张数不能为负数')
+  if ((rollingDays > 0) !== (rollingLimit > 0)) {
+    return fail('滚动限领要填全：多少天内最多领几张，两个都填 0 表示不启用')
+  }
+
+  const periodType = (PERIOD_TYPES as readonly string[]).includes(raw?.periodType)
+    ? (raw.periodType as string)
+    : 'none'
+  const periodCount = parseInt(raw?.periodCount ?? '0', 10)
+  if (!Number.isInteger(periodCount) || periodCount < 0) return fail('每周期限领张数不能为负数')
+  if ((periodType !== 'none') !== (periodCount > 0)) {
+    return fail('自然周期限领要填全：先选每天/每周/每月，再填张数')
+  }
 
   let startTime = ''
   let endTime = ''
@@ -71,7 +113,14 @@ function validateCouponInput(raw: any): ValidateResult {
       startTime,
       endTime,
       validDays: validMode === 'relative' ? validDays : 0,
-      description
+      description,
+      giftName,
+      giftQuantity,
+      visible,
+      rollingDays,
+      rollingLimit,
+      periodType,
+      periodCount
     }
   }
 }
@@ -95,11 +144,16 @@ export async function GET(request: Request) {
       return NextResponse.json({ coupon: { ...coupon, claimCount, usedCount } })
     }
 
-    // 管理员查看全部：附带领取/使用统计，供删除前展示影响面
+    // 管理员查看全部：附带领取/使用统计，供删除前展示影响面。
+    // 注意这里**不能**按 visible 过滤——隐藏券正是要在后台管理的东西。
     if (all === 'true') {
       const user = await getAuthUser()
       if (user?.role === 'admin') {
-        const coupons = await prisma.coupon.findMany({ orderBy: { createdAt: 'desc' } })
+        const coupons = await prisma.coupon.findMany({
+          orderBy: { createdAt: 'desc' },
+          // 哪些会员卡会自动推这张券，列表上给个徽章
+          include: { planGifts: { select: { plan: { select: { id: true, name: true } } } } }
+        })
 
         const grouped = await prisma.userCoupon.groupBy({
           by: ['couponId', 'status'],
@@ -113,10 +167,11 @@ export async function GET(request: Request) {
         }
 
         return NextResponse.json({
-          coupons: coupons.map(c => ({
+          coupons: coupons.map(({ planGifts, ...c }) => ({
             ...c,
             claimCount: claimCount[c.id] || 0,
-            usedCount: usedCount[c.id] || 0
+            usedCount: usedCount[c.id] || 0,
+            autoPushPlans: planGifts.map(p => p.plan)
           }))
         })
       }
@@ -126,35 +181,40 @@ export async function GET(request: Request) {
     const user = await getAuthUser()
 
     // 有效期两种模式的判定逻辑不同（fixed 看日期窗口，relative 恒可领），
-    // 统一交给 isCouponInWindow，避免在 SQL 里写一套、JS 里再写一套
+    // 统一交给 isCouponInWindow，避免在 SQL 里写一套、JS 里再写一套。
+    // visible=false 的隐藏券不在这里出现：消费者看不到也不能自领，只能由后台推送
+    // （领了之后它仍然会出现在券包里，因为「隐藏」不等于「失效」）。
     const active = await prisma.coupon.findMany({
       where: { status: 'active' },
       orderBy: { createdAt: 'desc' }
     })
-    const coupons = active.filter(c => isCouponInWindow(c))
+    const coupons = active.filter(c => isCouponInWindow(c) && c.visible)
 
-    let myClaimCount: Record<string, number> = {}
+    // 一次把券包的时间戳全取回来，三条限领规则（总量 / 滚动窗口 / 自然周期）
+    // 都在 JS 里算——比按券逐个 count 稳，也避免规则散在两个查询里。
+    const mineTimes: Record<string, Date[]> = {}
     if (user) {
-      const grouped = await prisma.userCoupon.groupBy({
-        by: ['couponId'],
+      const rows = await prisma.userCoupon.findMany({
         where: { userId: user.id },
-        _count: { _all: true }
+        select: { couponId: true, claimTime: true }
       })
-      myClaimCount = Object.fromEntries(grouped.map(g => [g.couponId, g._count._all]))
+      for (const r of rows) {
+        ;(mineTimes[r.couponId] ||= []).push(r.claimTime)
+      }
     }
 
     return NextResponse.json({
       coupons: coupons.map(c => {
-        const mine = myClaimCount[c.id] || 0
+        const limit = evaluateClaimLimits(c, mineTimes[c.id] || [])
         const soldOut = c.stock > 0 && c.claimed >= c.stock
-        const reachedLimit = c.perUserLimit > 0 && mine >= c.perUserLimit
         return {
           ...c,
-          myClaimCount: mine,
+          myClaimCount: limit.totalCount,
           soldOut,
-          reachedLimit,
-          // 还能再领几张（-1 表示不限量）
-          remainForMe: c.perUserLimit > 0 ? Math.max(0, c.perUserLimit - mine) : -1
+          reachedLimit: limit.blocked,
+          // 还能再领几张（-1 表示所有规则都没启用）
+          remainForMe: limit.remain,
+          limitReason: limit.reason
         }
       })
     })

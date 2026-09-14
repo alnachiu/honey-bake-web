@@ -94,6 +94,19 @@ export default function OrderDetailPage() {
               <p className="text-sm text-text-primary">¥{(item.price * item.quantity).toFixed(2)}</p>
             </div>
           ))}
+          {/* 买赠券带来的赠品：不关联商品、不计金额，只随单配送 */}
+          {order.giftName && order.giftQuantity > 0 && (
+            <div className="flex items-center gap-3 pt-3 border-t border-warm-100">
+              <div className="w-14 h-14 rounded-xl bg-primary-50 flex items-center justify-center text-xl flex-shrink-0">🎁</div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-text-primary truncate">
+                  {order.giftName}
+                  <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 text-primary-500">赠品</span>
+                </p>
+                <p className="text-xs text-text-light">x{order.giftQuantity} · 随单配送</p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

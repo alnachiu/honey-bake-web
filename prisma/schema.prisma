@@ -57,6 +57,10 @@ model Order {
   itemsAmount    Float       @default(0)
   couponDiscount Float       @default(0)
   memberDiscount Float       @default(0) // 会员折扣金额，单独记录便于对账
+  // 买赠券带来的赠品，随单配送。赠品是自由文本、不关联商品，所以不能塞进 OrderItem
+  // （那张表的 productId 是必填外键），只能挂在订单上。
+  giftName       String      @default("")
+  giftQuantity   Int         @default(0)
   remark         String      @default("")
   addressId      String?
   address        Address?    @relation(fields: [addressId], references: [id])
@@ -99,8 +103,8 @@ model Address {
 model Coupon {
   id           String       @id @default(cuid())
   name         String
-  type         String       // reduce | discount
-  value        Float
+  type         String       // reduce 满减 | discount 折扣 | gift 买赠
+  value        Float        // gift 类型恒为 0：赠品券只改订单上的赠品，不改金额
   minAmount    Float        @default(0)
   stock        Int          @default(0)
   claimed      Int          @default(0)
@@ -110,10 +114,22 @@ model Coupon {
   validDays    Int          @default(0) // validMode=relative：领取后 N 天内有效
   description  String       @default("")
   stackable    Boolean      @default(false) // 是否可与其他优惠券叠加使用
-  perUserLimit Int          @default(1) // 每人最多领取数量，0 = 不限
+  perUserLimit Int          @default(1) // 每人最多领取数量（总量，不区分时间），0 = 不限
+  // type=gift：赠品名称与数量。刻意不关联 Product——店主只想写「曲奇一盒」这种自由文本
+  giftName     String       @default("")
+  giftQuantity Int          @default(0)
+  // false = 隐藏券：消费者看不到、也不能自己领，只能店主在后台推送。但券本身仍然有效，
+  // 被推送出去后照常核销（「隐藏」不等于「失效」）。
+  visible      Boolean      @default(true)
+  // 领取限制的时间维度，两种可分别启用，与上面的 perUserLimit 同时生效：
+  rollingDays  Int          @default(0) // 滚动窗口：最近 N 天内……（0 = 不启用）
+  rollingLimit Int          @default(0) // ……最多领取 M 张（0 = 不启用）
+  periodType   String       @default("none") // none 不启用 | day | week | month 自然周期
+  periodCount  Int          @default(0) // 每个自然周期内最多领取 K 张（0 = 不启用）
   status       String       @default("active") // active | expired
   createdAt    DateTime     @default(now())
   userCoupons  UserCoupon[]
+  planGifts    MembershipPlanCoupon[]
 }
 
 model UserCoupon {
@@ -128,7 +144,8 @@ model UserCoupon {
   expireTime DateTime? // validMode=relative 时落到具体到期时刻；fixed 模式由 coupon.endTime 决定
   useTime    DateTime?
 
-  @@index([userId, couponId])
+  // claimTime 一起进索引：限领的时间维度（滚动窗口 / 自然周期）都按领取时刻统计
+  @@index([userId, couponId, claimTime])
 }
 
 model ShopSetting {
@@ -142,14 +159,29 @@ model ShopSetting {
 }
 
 model MembershipPlan {
-  id        String            @id @default(cuid())
-  name      String // 如「年卡」
-  price     Float
-  days      Int // 有效天数
-  sort      Int               @default(0)
-  active    Boolean           @default(true)
-  createdAt DateTime          @default(now())
-  orders    MembershipOrder[]
+  id          String                 @id @default(cuid())
+  name        String // 如「年卡」
+  price       Float
+  days        Int // 有效天数
+  sort        Int                    @default(0)
+  active      Boolean                @default(true)
+  createdAt   DateTime               @default(now())
+  orders      MembershipOrder[]
+  giftCoupons MembershipPlanCoupon[]
+}
+
+// 每张会员卡各配一套「成为会员后自动推送」的券。
+// 用关联表而不是 ShopSetting 里的 JSON 数组：这样删券/删套餐能靠外键级联自动清理，
+// 不用在每个删除路径上手动维护那份数组。
+model MembershipPlanCoupon {
+  id        String         @id @default(cuid())
+  planId    String
+  plan      MembershipPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  couponId  String
+  coupon    Coupon         @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+
+  @@unique([planId, couponId])
 }
 
 model MembershipOrder {

@@ -5,9 +5,10 @@ import Link from 'next/link'
 import CouponForm, {
   EMPTY_COUPON_FORM,
   CouponFormValue,
-  couponFormToBody
+  couponFormToBody,
+  couponToForm
 } from '@/components/CouponForm'
-import { couponValidityText } from '@/lib/utils'
+import { couponValidityText, couponAmountLabel, couponValueText, claimLimitHint } from '@/lib/utils'
 
 export default function AdminCouponsPage() {
   const [coupons, setCoupons] = useState<any[]>([])
@@ -16,6 +17,7 @@ export default function AdminCouponsPage() {
   const [form, setForm] = useState<CouponFormValue>(EMPTY_COUPON_FORM)
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState('')
+  const [togglingId, setTogglingId] = useState('')
   const [message, setMessage] = useState('')
 
   useEffect(() => { fetchCoupons() }, [])
@@ -49,6 +51,35 @@ export default function AdminCouponsPage() {
       alert('创建失败，请稍后重试')
     }
     setSaving(false)
+  }
+
+  /**
+   * 显示 / 隐藏快捷开关。
+   * PUT 是**全量覆盖**，只发 {id, visible} 会把其余字段一并写空，
+   * 所以这里用 couponToForm 把整张券还原成表单值、翻转 visible，再整体发回去。
+   */
+  const handleToggleVisible = async (c: any) => {
+    const next = !c.visible
+    setTogglingId(c.id)
+    try {
+      const body = { id: c.id, ...couponFormToBody({ ...couponToForm(c), visible: next }) }
+      const res = await fetch('/api/coupons', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setCoupons(prev => prev.map(k => (k.id === c.id ? { ...k, visible: next } : k)))
+        setMessage(next ? '已设为显示，消费者可自行领取' : '已隐藏，只能由你在后台推送')
+      } else {
+        alert(data.error || '操作失败')
+      }
+    } catch (err) {
+      alert('操作失败，请稍后重试')
+    }
+    setTogglingId('')
+    setTimeout(() => setMessage(''), 2500)
   }
 
   const handleDelete = async (c: any) => {
@@ -122,14 +153,26 @@ export default function AdminCouponsPage() {
               <div key={c.id} className="card">
                 <div className="flex items-center gap-3">
                   <div className="w-16 h-16 bg-primary-50 rounded-xl flex flex-col items-center justify-center flex-shrink-0">
-                    <span className="text-lg font-bold text-primary-500">{c.type === 'reduce' ? '¥' : ''}{c.value}{c.type === 'discount' ? '折' : ''}</span>
+                    <span className="text-lg font-bold text-primary-500">{couponAmountLabel(c)}</span>
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-text-primary">{c.name}</p>
-                    <p className="text-xs text-text-light mt-0.5">{c.description || '无门槛'}</p>
+                    <p className="text-xs text-text-light mt-0.5">{c.description || couponValueText(c)}</p>
                     <p className="text-[10px] text-text-light mt-0.5">{couponValidityText(c)}</p>
 
                     <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                      {c.type === 'gift' && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-pink-50 text-pink-500">🎁 买赠</span>
+                      )}
+                      {/* 隐藏券：消费者看不到也不能自领，只能后台推送。券本身仍然有效 */}
+                      {c.visible === false && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-50 text-purple-500">🙈 已隐藏</span>
+                      )}
+                      {(c.autoPushPlans || []).map((p: any) => (
+                        <span key={p.id} className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">
+                          💎 {p.name} 自动推送
+                        </span>
+                      ))}
                       <span className={`text-[10px] px-2 py-0.5 rounded-full ${c.validMode === 'relative' ? 'bg-blue-50 text-blue-500' : 'bg-warm-100 text-text-light'}`}>
                         {c.validMode === 'relative' ? '领取后生效' : '固定日期'}
                       </span>
@@ -137,7 +180,7 @@ export default function AdminCouponsPage() {
                         {c.stackable ? '可叠加' : '不可叠加'}
                       </span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-warm-100 text-text-light">
-                        每人限领 {c.perUserLimit > 0 ? `${c.perUserLimit} 张` : '不限'}
+                        {claimLimitHint(c) || '不限领取'}
                       </span>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full ${soldOut ? 'bg-red-50 text-red-400' : 'bg-warm-100 text-text-light'}`}>
                         {soldOut ? '已领完 · ' : ''}已领 {c.claimed}{c.stock > 0 ? ` / ${c.stock}` : ''}
@@ -151,6 +194,13 @@ export default function AdminCouponsPage() {
                     >
                       编辑
                     </Link>
+                    <button
+                      onClick={() => handleToggleVisible(c)}
+                      disabled={togglingId === c.id}
+                      className="text-[10px] px-2 py-1 rounded-full border border-warm-300 text-text-secondary disabled:opacity-50"
+                    >
+                      {togglingId === c.id ? '处理中' : c.visible === false ? '显示' : '隐藏'}
+                    </button>
                     <button
                       onClick={() => handleDelete(c)}
                       disabled={deletingId === c.id}

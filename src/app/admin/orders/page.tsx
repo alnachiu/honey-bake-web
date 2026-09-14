@@ -98,6 +98,10 @@ export default function AdminOrdersPage() {
                 {order.items?.map((item: any, i: number) => (
                   <span key={i} className="mr-3">{item.name} x{item.quantity}</span>
                 ))}
+                {/* 赠品也列在这里：打包的人看的就是这一行，不能只在别处提一句 */}
+                {order.giftName && order.giftQuantity > 0 && (
+                  <span className="text-primary-500">🎁 {order.giftName} x{order.giftQuantity}</span>
+                )}
               </div>
               <p className="text-xs text-text-light mb-1">{new Date(order.createdAt).toLocaleString('zh-CN')}</p>
               {order.address && <p className="text-xs text-text-light mb-2">📍 {order.address.name} {order.address.phone} {order.address.detail}</p>}
@@ -111,12 +115,14 @@ export default function AdminOrdersPage() {
                 </div>
               )}
 
-              {(order.couponDiscount > 0 || order.memberDiscount > 0) && (
-                // 对账提示：实收低于商品原价时，让店主一眼看出优惠去了哪里
+              {(order.couponDiscount > 0 || order.memberDiscount > 0 || order.giftName) && (
+                // 对账提示：实收低于商品原价时，让店主一眼看出优惠去了哪里；
+                // 赠品不减钱但也要记一笔，否则这一单「为什么少发了东西」事后查不出来
                 <p className="text-[10px] text-text-light pt-2">
                   商品 ¥{(order.itemsAmount || 0).toFixed(2)}
                   {order.couponDiscount > 0 && ` · 优惠券 -¥${order.couponDiscount.toFixed(2)}`}
                   {order.memberDiscount > 0 && ` · 会员折扣 -¥${order.memberDiscount.toFixed(2)}`}
+                  {order.giftName && order.giftQuantity > 0 && ` · 赠品 ${order.giftName} ×${order.giftQuantity}`}
                 </p>
               )}
 
