@@ -121,6 +121,7 @@ export default function OrderDetailPage() {
             <div className="flex justify-between text-xs"><span className="text-text-light">商品金额</span><span>¥{order.itemsAmount?.toFixed(2)}</span></div>
             <div className="flex justify-between text-xs"><span className="text-text-light">配送费</span><span>{order.deliveryFee > 0 ? `¥${order.deliveryFee.toFixed(2)}` : '免运费'}</span></div>
             {order.couponDiscount > 0 && <div className="flex justify-between text-xs"><span className="text-text-light">优惠券</span><span className="text-primary-500">-¥{order.couponDiscount.toFixed(2)}</span></div>}
+            {order.memberDiscount > 0 && <div className="flex justify-between text-xs"><span className="text-text-light">💎 会员折扣</span><span className="text-primary-500">-¥{order.memberDiscount.toFixed(2)}</span></div>}
             <div className="flex justify-between text-sm font-semibold pt-1"><span>实付金额</span><span className="text-primary-500">¥{order.totalAmount.toFixed(2)}</span></div>
           </div>
         </div>

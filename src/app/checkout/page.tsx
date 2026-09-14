@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCart } from '@/components/CartProvider'
-import { calcCouponsDiscount } from '@/lib/utils'
+import { calcOrderAmount, couponExpireText, isMemberActive, isValidPhone } from '@/lib/utils'
 
 export default function CheckoutPage() {
   const router = useRouter()
@@ -15,13 +15,22 @@ export default function CheckoutPage() {
   const [addresses, setAddresses] = useState<any[]>([])
   const [selectedAddressId, setSelectedAddressId] = useState<string>('')
   const [coupons, setCoupons] = useState<any[]>([])
+  // 记录的是 UserCoupon.id（券包里具体那一张），不是券模板 id。
+  // 用券模板 id 会把同一张券的多张副本一起选中，下单时被一次全部核销。
   const [selectedCouponIds, setSelectedCouponIds] = useState<string[]>([])
+  const [memberRate, setMemberRate] = useState(1)
   const [remark, setRemark] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [showAddressModal, setShowAddressModal] = useState(false)
   const [showCouponModal, setShowCouponModal] = useState(false)
   const [guestInfo, setGuestInfo] = useState({ name: '', phone: '', detail: '' })
   const [newAddress, setNewAddress] = useState({ name: '', phone: '', detail: '' })
+  // 游客填的手机号命中会员时，提示他先登录（游客单不打折，见 /api/orders/guest）
+  const [memberByPhone, setMemberByPhone] = useState<{ isMember: boolean; discount: number } | null>(null)
+  const [phoneLoggingIn, setPhoneLoggingIn] = useState(false)
+  const [addressesLoaded, setAddressesLoaded] = useState(false)
+  const [pendingAddressPick, setPendingAddressPick] = useState(false)
+  const [toast, setToast] = useState('')
 
   const addNewAddress = async () => {
     if (!newAddress.name || !newAddress.phone || !newAddress.detail) { alert('请填写完整地址信息'); return }
@@ -50,8 +59,49 @@ export default function CheckoutPage() {
     if (user) {
       fetchAddresses()
       fetchMyCoupons()
+      fetchMemberRate()
     }
   }, [user])
+
+  // 手机号防抖查会员：只在格式合法后才发请求，避免每敲一位就打一次接口
+  useEffect(() => {
+    if (user) return
+    const phone = guestInfo.phone
+    if (!isValidPhone(phone)) { setMemberByPhone(null); return }
+
+    let alive = true
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/membership/check?phone=${encodeURIComponent(phone)}`)
+        const data = await res.json()
+        if (alive) setMemberByPhone(data?.isMember ? data : null)
+      } catch (err) {
+        // 查失败只是不显示提示条，不挡住下单
+        if (alive) setMemberByPhone(null)
+      }
+    }, 400)
+
+    return () => { alive = false; clearTimeout(timer) }
+  }, [guestInfo.phone, user])
+
+  // 一键手机号登录之后：该账号已有地址就直接选上，没有就弹地址框
+  // （guestInfo 已经在 loginByPhone 里预填进 newAddress，用户只需点保存）
+  useEffect(() => {
+    if (!pendingAddressPick || !user || !addressesLoaded) return
+    const def = addresses.find((a: any) => a.isDefault) || addresses[0]
+    if (def) setSelectedAddressId(def.id)
+    else setShowAddressModal(true)
+    setPendingAddressPick(false)
+  }, [pendingAddressPick, user, addressesLoaded, addresses])
+
+  const fetchMemberRate = async () => {
+    try {
+      const res = await fetch('/api/settings')
+      const data = await res.json()
+      const rate = data?.settings?.memberDiscount
+      if (Number.isFinite(rate) && rate > 0 && rate <= 1) setMemberRate(rate)
+    } catch (err) { console.error(err) }
+  }
 
   const fetchAddresses = async () => {
     try {
@@ -61,33 +111,61 @@ export default function CheckoutPage() {
       const def = (data.addresses || []).find((a: any) => a.isDefault)
       if (def) setSelectedAddressId(def.id)
     } catch (err) { console.error(err) }
+    setAddressesLoaded(true)
   }
 
   const fetchMyCoupons = async () => {
     try {
       const res = await fetch('/api/coupons/claim')
       const data = await res.json()
-      setCoupons((data.coupons || []).filter((c: any) => c.status === 'active'))
+      // usable 由服务端按有效期算好（fixed 看日期窗口、relative 看 expireTime）
+      setCoupons((data.coupons || []).filter((c: any) => c.usable))
     } catch (err) { console.error(err) }
   }
 
   const itemsAmount = items.reduce((s, i) => s + i.price * i.quantity, 0)
-  const deliveryFee = itemsAmount >= 68 ? 0 : 5
-  const selectedCoupons = coupons.filter(c => selectedCouponIds.includes(c.id))
-  const { discount: couponDiscount } = calcCouponsDiscount(itemsAmount, selectedCoupons)
-  const totalAmount = Math.max(0, itemsAmount + deliveryFee - couponDiscount)
+  const selectedCoupons = coupons.filter(c => selectedCouponIds.includes(c.userCouponId))
+  const isMember = isMemberActive(user?.memberExpire)
+  const { couponDiscount, memberDiscount, deliveryFee, totalAmount } = calcOrderAmount({
+    itemsAmount,
+    coupons: selectedCoupons,
+    memberDiscountRate: isMember ? memberRate : 1
+  })
 
   // 多选券时维持叠加规则：两张券必须都允许叠加才能同时选中
   const toggleCoupon = (coupon: any) => {
     setSelectedCouponIds(prev => {
-      if (prev.includes(coupon.id)) return prev.filter(id => id !== coupon.id)
-      const others = coupons.filter(c => prev.includes(c.id) && c.id !== coupon.id)
+      if (prev.includes(coupon.userCouponId)) return prev.filter(id => id !== coupon.userCouponId)
+      const others = coupons.filter(c => prev.includes(c.userCouponId))
       if (others.length && (!coupon.stackable || others.some(c => !c.stackable))) {
         alert('该优惠券不可与其他优惠券叠加使用，请先取消已选中的券')
         return prev
       }
-      return [...prev, coupon.id]
+      return [...prev, coupon.userCouponId]
     })
+  }
+
+  const loginByPhone = async () => {
+    if (!isValidPhone(guestInfo.phone)) { alert('手机号格式不正确'); return }
+    setPhoneLoggingIn(true)
+    try {
+      const res = await fetch('/api/auth/phone-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: guestInfo.phone, name: guestInfo.name })
+      })
+      const data = await res.json()
+      if (!res.ok) { alert(data.error || '登录失败'); setPhoneLoggingIn(false); return }
+      // 登录后走的是另一套下单接口（要 addressId），把刚填的收货信息预填进「新增地址」
+      setNewAddress({ name: guestInfo.name, phone: guestInfo.phone, detail: guestInfo.detail })
+      setPendingAddressPick(true)
+      await refreshUser()
+      setToast('登录成功，本单即享会员折扣')
+      setTimeout(() => setToast(''), 3000)
+    } catch (err) {
+      alert('登录失败，请稍后重试')
+    }
+    setPhoneLoggingIn(false)
   }
 
   const submitOrder = async () => {
@@ -96,7 +174,7 @@ export default function CheckoutPage() {
     if (!user) {
       // 游客下单
       if (!guestInfo.name || !guestInfo.phone) { alert('请填写姓名和手机号'); return }
-      if (!/^1[3-9]\d{9}$/.test(guestInfo.phone)) { alert('手机号格式不正确'); return }
+      if (!isValidPhone(guestInfo.phone)) { alert('手机号格式不正确'); return }
       setSubmitting(true)
       try {
         const res = await fetch('/api/orders/guest', {
@@ -153,6 +231,12 @@ export default function CheckoutPage() {
 
   return (
     <div className="pb-28">
+      {toast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-black/70 text-white px-5 py-2.5 rounded-xl text-sm toast-enter">
+          {toast}
+        </div>
+      )}
+
       <div className="px-4 pt-4 space-y-3">
         {/* Guest Checkout Form */}
         {!user && (
@@ -164,6 +248,23 @@ export default function CheckoutPage() {
               <textarea className="input-field text-sm min-h-[60px] py-2" placeholder="收货地址 *（如：广东省广州市天河区XX路XX号）" value={guestInfo.detail} onChange={e => setGuestInfo(p => ({...p, detail: e.target.value}))} />
               <p className="text-[10px] text-text-light">💡 填写后系统自动创建账号，下次用手机号即可登录</p>
             </div>
+
+            {/* 该手机号是会员：游客单不打折，提示先登录 */}
+            {memberByPhone && (
+              <div className="mt-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5">
+                <p className="text-xs text-amber-700 font-medium">⚠️ 该手机号为会员，请先用手机号登录</p>
+                <p className="text-[11px] text-amber-600 mt-0.5">
+                  登录后本单即享 {Math.round(memberByPhone.discount * 100) / 10} 折
+                </p>
+                <button
+                  onClick={loginByPhone}
+                  disabled={phoneLoggingIn}
+                  className="mt-2 text-[11px] px-3 py-1.5 rounded-full bg-primary-500 text-white disabled:opacity-60"
+                >
+                  {phoneLoggingIn ? '登录中...' : '用手机号登录'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -227,6 +328,12 @@ export default function CheckoutPage() {
           <div className="flex justify-between text-sm"><span className="text-text-secondary">商品金额</span><span>¥{itemsAmount.toFixed(2)}</span></div>
           <div className="flex justify-between text-sm"><span className="text-text-secondary">配送费</span><span>{deliveryFee === 0 ? '免运费' : `¥${deliveryFee.toFixed(2)}`}</span></div>
           {couponDiscount > 0 && <div className="flex justify-between text-sm"><span className="text-text-secondary">优惠券</span><span className="text-primary-500">-¥{couponDiscount.toFixed(2)}</span></div>}
+          {memberDiscount > 0 && (
+            <div className="flex justify-between text-sm">
+              <span className="text-text-secondary">💎 会员折扣</span>
+              <span className="text-primary-500">-¥{memberDiscount.toFixed(2)}</span>
+            </div>
+          )}
           <div className="border-t border-warm-200 pt-2 flex justify-between">
             <span className="font-medium">实付金额</span>
             <span className="text-lg font-bold text-primary-500">¥{totalAmount.toFixed(2)}</span>
@@ -296,11 +403,11 @@ export default function CheckoutPage() {
                 <p className="text-sm font-medium">不使用优惠券</p>
               </div>
               {coupons.map(c => {
-                const checked = selectedCouponIds.includes(c.id)
+                const checked = selectedCouponIds.includes(c.userCouponId)
                 const notEnough = c.type === 'reduce' && itemsAmount < c.minAmount
                 return (
                   <div
-                    key={c.id}
+                    key={c.userCouponId}
                     onClick={() => !notEnough && toggleCoupon(c)}
                     className={`p-3 rounded-xl border flex items-center gap-3 ${checked ? 'border-primary-500 bg-primary-50' : 'border-warm-200'} ${notEnough ? 'opacity-50' : ''}`}
                   >
@@ -318,7 +425,7 @@ export default function CheckoutPage() {
                       <p className="text-xs text-text-light mt-1">
                         {c.minAmount > 0 ? `满${c.minAmount}元可用` : '无门槛'}
                         {notEnough ? ' · 未达门槛' : ''}
-                        {' · '}有效期至 {c.endTime}
+                        {' · '}{couponExpireText(c)}
                       </p>
                     </div>
                   </div>

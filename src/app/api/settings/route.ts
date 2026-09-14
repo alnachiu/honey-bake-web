@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getAuthUser, requireAdmin } from '@/lib/auth'
 
+// 必须显式声明为动态：这个 GET 不读 cookies/headers，Next 会把它静态预渲染，
+// 而静态化的 Route Handler 只接受 GET/HEAD——生产环境下 PUT 会直接返回 405，
+// 表现为后台「保存设置」按钮点了没反应（dev 模式不做静态优化，所以本地看不出来）。
+export const dynamic = 'force-dynamic'
+
 const DEFAULT_LAYOUT = JSON.stringify({
   sections: [
     { type: 'banner', visible: true, order: 0 },
@@ -47,6 +52,14 @@ export async function PUT(request: Request) {
     if (data.desc !== undefined) updateData.desc = data.desc
     if (data.paymentQR !== undefined) updateData.paymentQR = data.paymentQR
     if (data.layout !== undefined) updateData.layout = typeof data.layout === 'string' ? data.layout : JSON.stringify(data.layout)
+    if (data.memberDiscount !== undefined) {
+      const rate = parseFloat(data.memberDiscount)
+      // 折扣率必须落在 (0, 1]：1 = 不打折。超出范围直接拒绝，避免出现「会员反而更贵」
+      if (!Number.isFinite(rate) || rate <= 0 || rate > 1) {
+        return NextResponse.json({ error: '会员折扣率需在 0 到 1 之间（如 0.95 表示 95 折）' }, { status: 400 })
+      }
+      updateData.memberDiscount = rate
+    }
 
     const settings = await prisma.shopSetting.upsert({
       where: { id: 'default' },

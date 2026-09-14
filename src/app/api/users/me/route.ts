@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getAuthUser } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { isValidPhone } from '@/lib/utils'
 
 export async function GET() {
   try {
@@ -25,7 +26,25 @@ export async function PUT(request: Request) {
     const updateData: any = {}
     if (data.avatar !== undefined) updateData.avatar = data.avatar
     if (data.name !== undefined) updateData.name = data.name
-    if (data.phone !== undefined) updateData.phone = data.phone
+
+    if (data.phone !== undefined) {
+      const phone = String(data.phone).trim()
+      if (!isValidPhone(phone)) {
+        return NextResponse.json({ error: '请输入正确的手机号' }, { status: 400 })
+      }
+      // 手机号是会员卡的凭证，一个号只能挂在一个账号上——否则「凭此号享会员折扣」
+      // 会同时命中两个账号，订单归属和折扣都会变得不确定。
+      // 注：User.phone 不能加 @unique（存量数据里多个空串 `''` 会直接冲突），
+      // 所以唯一性只能在应用层守。
+      const taken = await prisma.user.findFirst({
+        where: { phone, NOT: { id: user.id } },
+        select: { id: true }
+      })
+      if (taken) {
+        return NextResponse.json({ error: '该手机号已绑定其他账号，请直接用手机号登录' }, { status: 400 })
+      }
+      updateData.phone = phone
+    }
 
     await prisma.user.update({
       where: { id: user.id },
@@ -34,7 +53,7 @@ export async function PUT(request: Request) {
 
     const updatedUser = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { id: true, email: true, name: true, phone: true, avatar: true, role: true }
+      select: { id: true, email: true, name: true, phone: true, avatar: true, role: true, memberExpire: true }
     })
 
     return NextResponse.json({ user: updatedUser })

@@ -13,3 +13,6 @@ uploads/*
 
 # docker compose 持久化数据目录（数据库 + 上传图片，部署后生成）
 data/
+
+# next build 的增量缓存，别提交
+tsconfig.tsbuildinfo

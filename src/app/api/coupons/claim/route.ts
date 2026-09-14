@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
-import { todayStr } from '@/lib/utils'
+import { isCouponInWindow, userCouponExpireAt, isUserCouponUsable } from '@/lib/coupons'
 
 export async function POST(request: Request) {
   try {
@@ -21,12 +21,9 @@ export async function POST(request: Request) {
     if (coupon.status !== 'active') {
       return NextResponse.json({ error: '该优惠券已停止发放' }, { status: 400 })
     }
-    const dateStr = todayStr()
-    if (dateStr < coupon.startTime) {
-      return NextResponse.json({ error: '该优惠券还未开始发放' }, { status: 400 })
-    }
-    if (dateStr > coupon.endTime) {
-      return NextResponse.json({ error: '该优惠券已过期' }, { status: 400 })
+    // relative 模式没有领取窗口，只要还在发放就一直能领
+    if (!isCouponInWindow(coupon)) {
+      return NextResponse.json({ error: '该优惠券不在可领取时间内' }, { status: 400 })
     }
 
     // 库存校验
@@ -46,7 +43,14 @@ export async function POST(request: Request) {
     // 领取与计数自增放在同一事务，避免计数漂移
     await prisma.$transaction([
       prisma.userCoupon.create({
-        data: { userId: user.id, couponId, status: 'active' }
+        data: {
+          userId: user.id,
+          couponId,
+          status: 'active',
+          source: 'claim',
+          // relative 模式在领取这一刻把「N 天」落到具体到期时刻；fixed 模式记 endTime
+          expireTime: userCouponExpireAt(coupon)
+        }
       }),
       prisma.coupon.update({
         where: { id: couponId },
@@ -81,8 +85,12 @@ export async function GET(request: Request) {
       ...uc.coupon,
       userCouponId: uc.id,
       status: uc.status,
+      source: uc.source,
       claimTime: uc.claimTime,
-      useTime: uc.useTime
+      expireTime: uc.expireTime,
+      useTime: uc.useTime,
+      // 券包列表的「还能用吗」统一按这个字段着色，避免前端自己算日期
+      usable: isUserCouponUsable(uc.coupon, uc)
     }))
 
     return NextResponse.json({ coupons })

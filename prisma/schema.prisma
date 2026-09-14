@@ -8,18 +8,21 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String
-  password  String
-  phone     String   @default("")
-  avatar    String   @default("")
-  role      String   @default("user") // user | admin
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  orders    Order[]
-  addresses Address[]
-  coupons   UserCoupon[]
+  id               String            @id @default(cuid())
+  email            String            @unique
+  name             String
+  password         String
+  phone            String            @default("")
+  avatar           String            @default("")
+  role             String            @default("user") // user | admin
+  memberExpire     DateTime? // 会员到期时间；null 或早于当前 = 非会员
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  orders           Order[]
+  addresses        Address[]
+  coupons          UserCoupon[]
+  notifications    Notification[]
+  membershipOrders MembershipOrder[]
 }
 
 model Product {
@@ -53,6 +56,7 @@ model Order {
   deliveryFee    Float       @default(0)
   itemsAmount    Float       @default(0)
   couponDiscount Float       @default(0)
+  memberDiscount Float       @default(0) // 会员折扣金额，单独记录便于对账
   remark         String      @default("")
   addressId      String?
   address        Address?    @relation(fields: [addressId], references: [id])
@@ -80,14 +84,14 @@ model OrderItem {
 }
 
 model Address {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   userId    String
-  user      User    @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
   name      String
   phone     String
-  region    String  @default("")
+  region    String   @default("")
   detail    String
-  isDefault Boolean @default(false)
+  isDefault Boolean  @default(false)
   createdAt DateTime @default(now())
   orders    Order[]
 }
@@ -100,8 +104,10 @@ model Coupon {
   minAmount    Float        @default(0)
   stock        Int          @default(0)
   claimed      Int          @default(0)
-  startTime    String
-  endTime      String
+  validMode    String       @default("fixed") // fixed 固定日期区间 | relative 领取后 N 天
+  startTime    String       @default("") // validMode=fixed：YYYY-MM-DDTHH:mm（旧数据为 YYYY-MM-DD）
+  endTime      String       @default("") // validMode=fixed：YYYY-MM-DDTHH:mm
+  validDays    Int          @default(0) // validMode=relative：领取后 N 天内有效
   description  String       @default("")
   stackable    Boolean      @default(false) // 是否可与其他优惠券叠加使用
   perUserLimit Int          @default(1) // 每人最多领取数量，0 = 不限
@@ -111,23 +117,69 @@ model Coupon {
 }
 
 model UserCoupon {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  couponId  String
-  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
-  status    String   @default("active") // active | used | expired
-  claimTime DateTime @default(now())
-  useTime   DateTime?
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  couponId   String
+  coupon     Coupon    @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  status     String    @default("active") // active | used | expired
+  source     String    @default("claim") // claim 用户自领 | push 店主推送
+  claimTime  DateTime  @default(now())
+  expireTime DateTime? // validMode=relative 时落到具体到期时刻；fixed 模式由 coupon.endTime 决定
+  useTime    DateTime?
 
   @@index([userId, couponId])
 }
 
 model ShopSetting {
-  id         String @id @default("default")
-  name       String @default("甜蜜烘焙")
-  phone      String @default("")
-  desc       String @default("用心烘焙每一份甜蜜")
-  paymentQR  String @default("")
-  layout     String @default("{}")
+  id             String @id @default("default")
+  name           String @default("甜蜜烘焙")
+  phone          String @default("")
+  desc           String @default("用心烘焙每一份甜蜜")
+  paymentQR      String @default("")
+  layout         String @default("{}")
+  memberDiscount Float  @default(1) // 会员折扣率：1 = 不打折，0.95 = 95 折
+}
+
+model MembershipPlan {
+  id        String            @id @default(cuid())
+  name      String // 如「年卡」
+  price     Float
+  days      Int // 有效天数
+  sort      Int               @default(0)
+  active    Boolean           @default(true)
+  createdAt DateTime          @default(now())
+  orders    MembershipOrder[]
+}
+
+model MembershipOrder {
+  id        String         @id @default(cuid())
+  orderNo   String         @unique
+  userId    String
+  user      User           @relation(fields: [userId], references: [id])
+  planId    String
+  plan      MembershipPlan @relation(fields: [planId], references: [id])
+  // 下单时快照，避免套餐后续改价改名影响历史记录
+  planName  String
+  price     Float
+  days      Int
+  status    String         @default("pending") // pending | paid | cancelled
+  payTime   DateTime?
+  createdAt DateTime       @default(now())
+
+  @@index([userId, status])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  content   String   @default("")
+  type      String   @default("system") // system | coupon | member
+  link      String   @default("")
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
 }

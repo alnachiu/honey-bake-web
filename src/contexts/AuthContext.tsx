@@ -10,6 +10,8 @@ interface User {
   role: string
   phone: string
   avatar: string
+  /** 会员到期时间；null 或已过期 = 非会员 */
+  memberExpire?: string | null
 }
 
 interface AuthContextType {

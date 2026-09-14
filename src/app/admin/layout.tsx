@@ -30,6 +30,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <Link href="/admin/products" className="text-xs whitespace-nowrap px-3 py-1.5 rounded-full bg-warm-100 text-text-secondary hover:bg-primary-50 hover:text-primary-500 transition-colors">📦 商品</Link>
             <Link href="/admin/orders" className="text-xs whitespace-nowrap px-3 py-1.5 rounded-full bg-warm-100 text-text-secondary hover:bg-primary-50 hover:text-primary-500 transition-colors">📋 订单</Link>
             <Link href="/admin/coupons" className="text-xs whitespace-nowrap px-3 py-1.5 rounded-full bg-warm-100 text-text-secondary hover:bg-primary-50 hover:text-primary-500 transition-colors">🎫 优惠券</Link>
+            <Link href="/admin/membership" className="text-xs whitespace-nowrap px-3 py-1.5 rounded-full bg-warm-100 text-text-secondary hover:bg-primary-50 hover:text-primary-500 transition-colors">💎 会员卡</Link>
             <Link href="/admin/layout" className="text-xs whitespace-nowrap px-3 py-1.5 rounded-full bg-warm-100 text-text-secondary hover:bg-primary-50 hover:text-primary-500 transition-colors">🎨 排版</Link>
             <Link href="/admin/share" className="text-xs whitespace-nowrap px-3 py-1.5 rounded-full bg-warm-100 text-text-secondary hover:bg-primary-50 hover:text-primary-500 transition-colors">📱 分享</Link>
             <Link href="/admin/settings" className="text-xs whitespace-nowrap px-3 py-1.5 rounded-full bg-warm-100 text-text-secondary hover:bg-primary-50 hover:text-primary-500 transition-colors">⚙️ 设置</Link>

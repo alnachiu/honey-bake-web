@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
+import { couponExpireText } from '@/lib/utils'
 
 export default function CouponsPage() {
   const { user } = useAuth()
@@ -91,7 +92,7 @@ export default function CouponsPage() {
               </div>
               <div className="flex-1 pl-4 flex flex-col justify-center">
                 <p className="text-sm font-semibold text-text-primary">{coupon.name}</p>
-                <p className="text-xs text-text-light mt-1">有效期至 {coupon.endTime}</p>
+                <p className="text-xs text-text-light mt-1">{couponExpireText(coupon)}</p>
 
                 <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                   {coupon.stackable && (

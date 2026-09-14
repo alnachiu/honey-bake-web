@@ -42,7 +42,16 @@ export async function getAuthUser() {
 
   const user = await prisma.user.findUnique({
     where: { id: payload.userId },
-    select: { id: true, email: true, name: true, phone: true, avatar: true, role: true }
+    // memberExpire 供前端判断会员身份与展示会员价（不返回 password）
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      phone: true,
+      avatar: true,
+      role: true,
+      memberExpire: true
+    }
   })
 
   return user

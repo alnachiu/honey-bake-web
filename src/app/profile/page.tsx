@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { isMemberActive, isValidPhone } from '@/lib/utils'
 
 export default function ProfilePage() {
   const { user, logout, refreshUser } = useAuth()
@@ -16,6 +17,11 @@ export default function ProfilePage() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [pwdLoading, setPwdLoading] = useState(false)
+  // 绑定手机号：手机号是会员卡的凭证，邮箱注册的账号默认没有手机号
+  const [showPhoneModal, setShowPhoneModal] = useState(false)
+  const [phoneInput, setPhoneInput] = useState('')
+  const [phoneError, setPhoneError] = useState('')
+  const [phoneSaving, setPhoneSaving] = useState(false)
 
   useEffect(() => { if (!user) router.push('/login') }, [user])
 
@@ -101,6 +107,39 @@ export default function ProfilePage() {
     setTimeout(() => setMessage(''), 3000)
   }
 
+  const openPhoneModal = () => {
+    setPhoneInput(user?.phone || '')
+    setPhoneError('')
+    setShowPhoneModal(true)
+  }
+
+  const savePhone = async () => {
+    if (!isValidPhone(phoneInput)) { setPhoneError('请输入正确的手机号'); return }
+    setPhoneSaving(true)
+    setPhoneError('')
+    try {
+      const res = await fetch('/api/users/me', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: phoneInput })
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        // 该号已挂在别的账号上时服务端会回 400，提示直接用手机号登录
+        setPhoneError(data.error || '保存失败')
+        setPhoneSaving(false)
+        return
+      }
+      await refreshUser()
+      setShowPhoneModal(false)
+      setMessage('手机号已保存')
+      setTimeout(() => setMessage(''), 3000)
+    } catch (err) {
+      setPhoneError('保存失败，请稍后重试')
+    }
+    setPhoneSaving(false)
+  }
+
   if (!user) return null
 
   const showAvatar = avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(user.name || 'user')}&backgroundColor=fff0e8`
@@ -126,7 +165,13 @@ export default function ProfilePage() {
         <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
         <p className="font-semibold text-text-primary text-lg mt-3">{user.name}</p>
         <p className="text-sm text-text-light">{user.email}</p>
-        {user.phone && <p className="text-xs text-text-light mt-0.5">{user.phone}</p>}
+        <button onClick={openPhoneModal} className="mt-1.5 flex items-center gap-1.5">
+          {isValidPhone(user.phone) ? (
+            <span className="text-xs text-text-light">📱 {user.phone}</span>
+          ) : (
+            <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">📱 未绑定手机号 · 点此绑定</span>
+          )}
+        </button>
         <p className="text-xs text-text-light mt-2">👆 点击头像可上传照片</p>
 
         {saving && <p className="text-xs text-primary-500 mt-2">更新中...</p>}
@@ -153,6 +198,19 @@ export default function ProfilePage() {
         <Link href="/coupons" className="flex items-center py-3.5">
           <span className="text-lg mr-3">🎫</span>
           <span className="text-sm text-text-primary flex-1">优惠券</span>
+          <span className="text-text-light">›</span>
+        </Link>
+        <Link href="/member" className="flex items-center py-3.5">
+          <span className="text-lg mr-3">💎</span>
+          <span className="text-sm text-text-primary flex-1">会员卡</span>
+          {isMemberActive(user.memberExpire)
+            ? <span className="text-[10px] text-primary-500 bg-primary-50 px-2 py-0.5 rounded-full mr-1">已开通</span>
+            : <span className="text-[10px] text-text-light mr-1">未开通</span>}
+          <span className="text-text-light">›</span>
+        </Link>
+        <Link href="/messages" className="flex items-center py-3.5">
+          <span className="text-lg mr-3">🔔</span>
+          <span className="text-sm text-text-primary flex-1">消息中心</span>
           <span className="text-text-light">›</span>
         </Link>
       </div>
@@ -186,11 +244,40 @@ export default function ProfilePage() {
             <Link href="/admin" className="p-3 bg-warm-50 rounded-xl text-center"><p className="text-lg">📊</p><p className="text-xs text-text-secondary mt-1">数据概览</p></Link>
             <Link href="/admin/products" className="p-3 bg-warm-50 rounded-xl text-center"><p className="text-lg">📦</p><p className="text-xs text-text-secondary mt-1">商品管理</p></Link>
             <Link href="/admin/orders" className="p-3 bg-warm-50 rounded-xl text-center"><p className="text-lg">📋</p><p className="text-xs text-text-secondary mt-1">订单管理</p></Link>
+            <Link href="/admin/coupons" className="p-3 bg-warm-50 rounded-xl text-center"><p className="text-lg">🎫</p><p className="text-xs text-text-secondary mt-1">优惠券</p></Link>
+            <Link href="/admin/membership" className="p-3 bg-warm-50 rounded-xl text-center"><p className="text-lg">💎</p><p className="text-xs text-text-secondary mt-1">会员卡</p></Link>
           </div>
         </div>
       )}
 
       <button onClick={logout} className="w-full mt-6 py-3 text-center text-sm text-text-light">退出登录</button>
+
+      {/* 绑定手机号 */}
+      {showPhoneModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setShowPhoneModal(false)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-xs" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="font-semibold text-sm">绑定手机号</h3>
+              <button onClick={() => setShowPhoneModal(false)} className="text-text-light">✕</button>
+            </div>
+            <p className="text-xs text-text-light mb-3 leading-relaxed">
+              会员卡以手机号为凭证，绑定后凭该手机号下单即可享受会员折扣。
+            </p>
+            <input
+              type="tel"
+              className="input-field text-sm"
+              placeholder="请输入手机号"
+              maxLength={11}
+              value={phoneInput}
+              onChange={e => setPhoneInput(e.target.value)}
+            />
+            {phoneError && <p className="text-xs text-red-500 mt-2">{phoneError}</p>}
+            <button onClick={savePhone} disabled={phoneSaving} className="btn-primary w-full text-sm py-2 mt-4">
+              {phoneSaving ? '保存中...' : '保存'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

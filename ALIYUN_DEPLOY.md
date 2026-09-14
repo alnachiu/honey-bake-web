@@ -97,8 +97,11 @@ docker compose -f /root/honey-bake-web/docker-compose.yml logs -f
 # 重启服务
 docker compose -f /root/honey-bake-web/docker-compose.yml restart
 
-# 更新到最新代码
-cd /root/honey-bake-web && git pull && docker compose up -d --build
+# 更新到最新代码（镜像由 GitHub Actions 构建推到 GHCR，服务器只负责拉）
+cd /root/honey-bake-web && git pull --ff-only && docker compose pull && docker compose up -d
+
+# GHCR 拉不动时的备选：在服务器本地构建
+# cd /root/honey-bake-web && git pull --ff-only && docker compose up -d --build
 
 # 停止服务
 docker compose -f /root/honey-bake-web/docker-compose.yml down

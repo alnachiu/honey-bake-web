@@ -111,6 +111,15 @@ export default function AdminOrdersPage() {
                 </div>
               )}
 
+              {(order.couponDiscount > 0 || order.memberDiscount > 0) && (
+                // 对账提示：实收低于商品原价时，让店主一眼看出优惠去了哪里
+                <p className="text-[10px] text-text-light pt-2">
+                  商品 ¥{(order.itemsAmount || 0).toFixed(2)}
+                  {order.couponDiscount > 0 && ` · 优惠券 -¥${order.couponDiscount.toFixed(2)}`}
+                  {order.memberDiscount > 0 && ` · 会员折扣 -¥${order.memberDiscount.toFixed(2)}`}
+                </p>
+              )}
+
               <div className="flex justify-between items-center pt-2 border-t border-warm-100">
                 <span className="font-semibold text-primary-500">¥{order.totalAmount.toFixed(2)}</span>
                 <div className="flex gap-2 flex-wrap">

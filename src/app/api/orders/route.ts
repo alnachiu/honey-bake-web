@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
-import { generateOrderNo } from '@/lib/utils'
+import { generateOrderNo, calcOrderAmount } from '@/lib/utils'
 import { resolveUserCoupons } from '@/lib/coupons'
+import { getMemberDiscountRate } from '@/lib/membership'
 
 export async function GET(request: Request) {
   try {
@@ -63,9 +64,6 @@ export async function POST(request: Request) {
       }
     })
 
-    // 计算配送费
-    const deliveryFee = itemsAmount >= 68 ? 0 : 5
-
     // 校验并计算优惠券（归属 / 有效期 / 叠加规则）。
     // 传的是 UserCoupon.id（用户券包中那一张），不是券模板 id。
     const userCouponIds: string[] = Array.isArray(data.userCouponIds) ? data.userCouponIds : []
@@ -74,9 +72,16 @@ export async function POST(request: Request) {
     if (!resolved.ok) {
       return NextResponse.json({ error: resolved.error }, { status: 400 })
     }
-    const couponDiscount = resolved.discount
 
-    const totalAmount = Math.max(0, itemsAmount + deliveryFee - couponDiscount)
+    // 会员折扣率只在有效期内生效；非会员恒为 1（不打折）
+    const memberDiscountRate = await getMemberDiscountRate(user.memberExpire)
+
+    // 金额统一由 calcOrderAmount 计算，与结算页共用同一套规则（先券后会员、运费按原价判断）
+    const { couponDiscount, memberDiscount, deliveryFee, totalAmount } = calcOrderAmount({
+      itemsAmount,
+      coupons: resolved.coupons,
+      memberDiscountRate
+    })
 
     // 核销优惠券与创建订单放在同一事务：下单失败时券自动回滚，不会被白白烧掉
     const order = await prisma.$transaction(async tx => {
@@ -116,6 +121,7 @@ export async function POST(request: Request) {
           deliveryFee,
           itemsAmount,
           couponDiscount,
+          memberDiscount,
           remark: data.remark || '',
           addressId,
           status: 'pending'

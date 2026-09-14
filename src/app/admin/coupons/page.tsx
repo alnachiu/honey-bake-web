@@ -1,25 +1,19 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-
-const EMPTY_FORM = {
-  name: '',
-  type: 'reduce',
-  value: '',
-  minAmount: '0',
-  stock: '0',
-  perUserLimit: '1',
-  stackable: false,
-  startTime: '',
-  endTime: '',
-  description: ''
-}
+import Link from 'next/link'
+import CouponForm, {
+  EMPTY_COUPON_FORM,
+  CouponFormValue,
+  couponFormToBody
+} from '@/components/CouponForm'
+import { couponValidityText } from '@/lib/utils'
 
 export default function AdminCouponsPage() {
   const [coupons, setCoupons] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState<any>(EMPTY_FORM)
+  const [form, setForm] = useState<CouponFormValue>(EMPTY_COUPON_FORM)
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState('')
   const [message, setMessage] = useState('')
@@ -36,21 +30,17 @@ export default function AdminCouponsPage() {
   }
 
   const handleCreate = async () => {
-    if (!form.name || !form.value || !form.startTime || !form.endTime) { alert('请填写完整信息'); return }
-    if (form.type === 'discount' && parseFloat(form.value) >= 10) { alert('折扣力度需小于 10 折'); return }
-    if (form.startTime > form.endTime) { alert('开始时间不能晚于结束时间'); return }
-
     setSaving(true)
     try {
       const res = await fetch('/api/coupons', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+        body: JSON.stringify(couponFormToBody(form))
       })
       const data = await res.json()
       if (res.ok && data.coupon) {
         setShowForm(false)
-        setForm(EMPTY_FORM)
+        setForm(EMPTY_COUPON_FORM)
         fetchCoupons()
       } else {
         alert(data.error || '创建失败')
@@ -95,7 +85,10 @@ export default function AdminCouponsPage() {
     <div className="page-container pt-4 pb-20">
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-lg font-bold text-text-primary">🎫 优惠券管理</h1>
-        <button onClick={() => setShowForm(!showForm)} className="px-4 py-2 bg-gradient-to-r from-primary-500 to-primary-400 text-white text-xs rounded-full">＋ 新增</button>
+        <div className="flex items-center gap-2">
+          <Link href="/admin/membership" className="text-xs px-3 py-2 rounded-full border border-primary-200 text-primary-500">💎 会员卡</Link>
+          <button onClick={() => setShowForm(!showForm)} className="px-4 py-2 bg-gradient-to-r from-primary-500 to-primary-400 text-white text-xs rounded-full">＋ 新增</button>
+        </div>
       </div>
 
       {message && (
@@ -105,51 +98,15 @@ export default function AdminCouponsPage() {
       )}
 
       {showForm && (
-        <div className="card mb-4 space-y-3 animate-slide-up">
-          <div><input className="input-field text-sm" placeholder="优惠券名称" value={form.name} onChange={e => setForm((p: any) => ({...p,name: e.target.value}))} /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><select className="input-field text-sm" value={form.type} onChange={e => setForm((p: any) => ({...p,type: e.target.value}))}><option value="reduce">满减</option><option value="discount">折扣</option></select></div>
-            <div><input type="number" step="0.1" className="input-field text-sm" placeholder={form.type === 'reduce' ? '减多少元' : '打几折(如9)'} value={form.value} onChange={e => setForm((p: any) => ({...p,value: e.target.value}))} /></div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><input type="number" className="input-field text-sm" placeholder="最低消费" value={form.minAmount} onChange={e => setForm((p: any) => ({...p,minAmount: e.target.value}))} /></div>
-            <div><input type="number" className="input-field text-sm" placeholder="库存(0不限)" value={form.stock} onChange={e => setForm((p: any) => ({...p,stock: e.target.value}))} /></div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><input type="date" className="input-field text-sm" value={form.startTime} onChange={e => setForm((p: any) => ({...p,startTime: e.target.value}))} /></div>
-            <div><input type="date" className="input-field text-sm" value={form.endTime} onChange={e => setForm((p: any) => ({...p,endTime: e.target.value}))} /></div>
-          </div>
-          <div><input className="input-field text-sm" placeholder="描述" value={form.description} onChange={e => setForm((p: any) => ({...p,description: e.target.value}))} /></div>
-
-          {/* 每人限领 */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm text-text-primary">每人最多领取</p>
-              <p className="text-[10px] text-text-light mt-0.5">填 0 表示不限量</p>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button type="button" onClick={() => setForm((p: any) => ({...p, perUserLimit: String(Math.max(0, parseInt(p.perUserLimit || '0', 10) - 1))}))} className="w-7 h-7 bg-warm-100 rounded-full flex items-center justify-center text-sm text-text-secondary">−</button>
-              <input type="number" min="0" className="input-field text-sm w-16 text-center" value={form.perUserLimit} onChange={e => setForm((p: any) => ({...p,perUserLimit: e.target.value}))} />
-              <button type="button" onClick={() => setForm((p: any) => ({...p, perUserLimit: String(parseInt(p.perUserLimit || '0', 10) + 1)}))} className="w-7 h-7 bg-warm-100 rounded-full flex items-center justify-center text-sm text-text-secondary">＋</button>
-            </div>
-          </div>
-
-          {/* 可叠加 */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm text-text-primary">允许叠加使用</p>
-              <p className="text-[10px] text-text-light mt-0.5">需两张券都开启，才能在同一笔订单同时使用</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setForm((p: any) => ({...p, stackable: !p.stackable}))}
-              className={`ml-2 w-12 h-7 rounded-full transition-colors flex-shrink-0 ${form.stackable ? 'bg-green-400' : 'bg-warm-400'}`}
-            >
-              <div className={`w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${form.stackable ? 'translate-x-6' : 'translate-x-1'}`} />
-            </button>
-          </div>
-
-          <button onClick={handleCreate} disabled={saving} className="btn-primary w-full text-sm py-2">{saving ? '创建中...' : '创建优惠券'}</button>
+        <div className="card mb-4 animate-slide-up">
+          <CouponForm
+            value={form}
+            onChange={patch => setForm(prev => ({ ...prev, ...patch }))}
+            onSubmit={handleCreate}
+            submitting={saving}
+            submitText="创建优惠券"
+            onCancel={() => { setShowForm(false); setForm(EMPTY_COUPON_FORM) }}
+          />
         </div>
       )}
 
@@ -170,9 +127,12 @@ export default function AdminCouponsPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-text-primary">{c.name}</p>
                     <p className="text-xs text-text-light mt-0.5">{c.description || '无门槛'}</p>
-                    <p className="text-[10px] text-text-light mt-0.5">{c.startTime} ~ {c.endTime}</p>
+                    <p className="text-[10px] text-text-light mt-0.5">{couponValidityText(c)}</p>
 
                     <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${c.validMode === 'relative' ? 'bg-blue-50 text-blue-500' : 'bg-warm-100 text-text-light'}`}>
+                        {c.validMode === 'relative' ? '领取后生效' : '固定日期'}
+                      </span>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full ${c.stackable ? 'bg-green-50 text-green-600' : 'bg-warm-100 text-text-light'}`}>
                         {c.stackable ? '可叠加' : '不可叠加'}
                       </span>
@@ -184,13 +144,21 @@ export default function AdminCouponsPage() {
                       </span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDelete(c)}
-                    disabled={deletingId === c.id}
-                    className="text-[10px] px-2 py-1 rounded-full border border-red-200 text-red-400 disabled:opacity-50 flex-shrink-0"
-                  >
-                    {deletingId === c.id ? '删除中' : '删除'}
-                  </button>
+                  <div className="flex flex-col gap-1.5 flex-shrink-0">
+                    <Link
+                      href={`/admin/coupons/${c.id}/edit`}
+                      className="text-[10px] px-2 py-1 rounded-full border border-primary-200 text-primary-500 text-center"
+                    >
+                      编辑
+                    </Link>
+                    <button
+                      onClick={() => handleDelete(c)}
+                      disabled={deletingId === c.id}
+                      className="text-[10px] px-2 py-1 rounded-full border border-red-200 text-red-400 disabled:opacity-50"
+                    >
+                      {deletingId === c.id ? '删除中' : '删除'}
+                    </button>
+                  </div>
                 </div>
               </div>
             )

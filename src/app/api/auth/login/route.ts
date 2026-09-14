@@ -30,7 +30,8 @@ export async function POST(request: Request) {
         name: user.name,
         role: user.role,
         phone: user.phone,
-        avatar: user.avatar
+        avatar: user.avatar,
+        memberExpire: user.memberExpire
       }
     })
 

@@ -4,9 +4,11 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
+import { isValidPhone } from '@/lib/utils'
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<'email' | 'phone'>('email')
+  // 默认手机号登录：手机号是会员卡的凭证，会员最常用的入口就是这个
+  const [mode, setMode] = useState<'email' | 'phone'>('phone')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [phone, setPhone] = useState('')
@@ -22,7 +24,7 @@ export default function LoginPage() {
 
     try {
       if (mode === 'phone') {
-        if (!/^1[3-9]\d{9}$/.test(phone)) { setError('请输入正确的手机号'); setLoading(false); return }
+        if (!isValidPhone(phone)) { setError('请输入正确的手机号'); setLoading(false); return }
         const res = await fetch('/api/auth/phone-login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -68,6 +70,7 @@ export default function LoginPage() {
               <label className="text-sm text-text-secondary mb-1.5 block">手机号</label>
               <input type="tel" className="input-field" placeholder="请输入手机号" maxLength={11} value={phone} onChange={e => setPhone(e.target.value)} required />
               <p className="text-xs text-text-light mt-1.5">已有账号直接登录，新用户自动创建</p>
+              <p className="text-xs text-primary-500 mt-1">💎 会员卡以手机号为凭证，凭此号登录下单即享会员折扣</p>
             </div>
           ) : (
             <>

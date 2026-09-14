@@ -75,6 +75,10 @@ export default function AdminDashboardPage() {
           <p className="text-2xl mb-1">🎫</p>
           <p className="text-xs text-text-secondary">优惠券管理</p>
         </Link>
+        <Link href="/admin/membership" className="card text-center py-5">
+          <p className="text-2xl mb-1">💎</p>
+          <p className="text-xs text-text-secondary">会员卡设置</p>
+        </Link>
       </div>
 
       {data?.pendingOrdersCount > 0 && (

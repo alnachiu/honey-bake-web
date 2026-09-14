@@ -4,18 +4,31 @@ import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { isMemberActive } from '@/lib/utils'
 
 export default function Header() {
   const { user, logout } = useAuth()
   const [showMenu, setShowMenu] = useState(false)
   const [shopName, setShopName] = useState('甜蜜烘焙')
+  const [unreadCount, setUnreadCount] = useState(0)
   const router = useRouter()
+
+  const isMember = isMemberActive(user?.memberExpire)
 
   useEffect(() => {
     fetch('/api/settings').then(res => res.json()).then(data => {
       if (data.settings?.name) setShopName(data.settings.name)
     }).catch(() => {})
   }, [])
+
+  // 未登录时接口返回 401，静默忽略即可
+  useEffect(() => {
+    if (!user) { setUnreadCount(0); return }
+    fetch('/api/notifications?limit=1')
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => { if (data) setUnreadCount(data.unreadCount || 0) })
+      .catch(() => {})
+  }, [user])
 
   return (
     <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-warm-200">
@@ -28,6 +41,13 @@ export default function Header() {
         <div className="flex items-center gap-3">
           <Link href="/cart" className="text-xl relative">
             🛒
+          </Link>
+          {/* 会员卡入口不走购物车，直接进购买页 */}
+          <Link href="/member" className="text-xl relative">
+            💎
+            {isMember && (
+              <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 text-[8px] leading-none text-primary-500 font-medium whitespace-nowrap">会员</span>
+            )}
           </Link>
           {user ? (
             <div className="relative">
@@ -43,7 +63,19 @@ export default function Header() {
                       <p className="text-xs text-text-light">{user.email}</p>
                     </div>
                     <Link href="/orders" className="block px-4 py-2.5 text-sm text-text-primary hover:bg-warm-50" onClick={() => setShowMenu(false)}>我的订单</Link>
+                    <Link href="/member" className="flex items-center px-4 py-2.5 text-sm text-text-primary hover:bg-warm-50" onClick={() => setShowMenu(false)}>
+                      <span className="flex-1">💎 会员卡</span>
+                      {isMember && <span className="text-[10px] text-primary-500 bg-primary-50 px-1.5 py-0.5 rounded-full">已开通</span>}
+                    </Link>
                     <Link href="/coupons" className="block px-4 py-2.5 text-sm text-text-primary hover:bg-warm-50" onClick={() => setShowMenu(false)}>🎫 优惠券</Link>
+                    <Link href="/messages" className="flex items-center px-4 py-2.5 text-sm text-text-primary hover:bg-warm-50" onClick={() => setShowMenu(false)}>
+                      <span className="flex-1">🔔 消息中心</span>
+                      {unreadCount > 0 && (
+                        <span className="min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-medium rounded-full flex items-center justify-center px-1">
+                          {unreadCount > 99 ? '99+' : unreadCount}
+                        </span>
+                      )}
+                    </Link>
                     <Link href="/profile" className="block px-4 py-2.5 text-sm text-text-primary hover:bg-warm-50" onClick={() => setShowMenu(false)}>个人中心</Link>
                     {user.role === 'admin' && (
                       <>
