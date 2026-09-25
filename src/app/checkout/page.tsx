@@ -1,15 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCart } from '@/components/CartProvider'
-import { calcOrderAmount, couponExpireText, isMemberActive, isValidPhone, couponAmountLabel, couponValueText, giftFromCoupon } from '@/lib/utils'
+import { calcOrderAmount, calcOrderDeliveryFee, couponExpireText, isMemberActive, isValidPhone, couponAmountLabel, couponValueText, giftFromCoupon } from '@/lib/utils'
 
 export default function CheckoutPage() {
   const router = useRouter()
-  const { user, refreshUser } = useAuth()
+  const { user, loading: authLoading, refreshUser } = useAuth()
   const { clearCart } = useCart()
   const [items, setItems] = useState<any[]>([])
   const [addresses, setAddresses] = useState<any[]>([])
@@ -54,6 +54,29 @@ export default function CheckoutPage() {
     if (saved) { setItems(JSON.parse(saved)) }
     else { router.push('/cart') }
   }, [])
+
+  // 商品里的 deliveryFee 是**加购那一刻**的快照。店主事后改运费（蛋糕从 0 改成 8），
+  // 结算页照旧值预览、服务端却按库里新值收费，用户就会看到「免运费」却被收 8 元。
+  // 所以先拿最新运费校准一遍再算钱。只同步运费，不动 price——
+  // 服务端记的商品价格仍是前端传的值（/api/orders 对价格是全信前端的），
+  // 单方面把展示价改成新价只会让界面和订单记录对不上。
+  const feeSyncedRef = useRef(false)
+  useEffect(() => {
+    if (feeSyncedRef.current || !items.length) return
+    feeSyncedRef.current = true   // 失败也不重试，避免网络抖动时反复打接口
+    const ids = Array.from(new Set(items.map((i: any) => i.id).filter(Boolean)))
+    if (!ids.length) return
+    fetch(`/api/products?ids=${encodeURIComponent(ids.join(','))}`)
+      .then(res => res.json())
+      .then(data => {
+        const list = data?.products
+        if (!Array.isArray(list) || !list.length) return
+        const feeById = new Map<string, number>(list.map((p: any) => [p.id, Number(p.deliveryFee) || 0]))
+        // 查不到的商品（已下架）保留原值兜底：下架由服务端拦，不该让用户卡在结算页
+        setItems(prev => prev.map(i => feeById.has(i.id) ? { ...i, deliveryFee: feeById.get(i.id) as number } : i))
+      })
+      .catch(() => {})
+  }, [items])
 
   useEffect(() => {
     if (user) {
@@ -126,10 +149,13 @@ export default function CheckoutPage() {
   const itemsAmount = items.reduce((s, i) => s + i.price * i.quantity, 0)
   const selectedCoupons = coupons.filter(c => selectedCouponIds.includes(c.userCouponId))
   const isMember = isMemberActive(user?.memberExpire)
+  // 整单一个运费：取所有商品里最高的那个，与 /api/orders 的算法同源
+  const orderDeliveryFee = calcOrderDeliveryFee(items)
   const { couponDiscount, memberDiscount, deliveryFee, totalAmount } = calcOrderAmount({
     itemsAmount,
     coupons: selectedCoupons,
-    memberDiscountRate: isMember ? memberRate : 1
+    memberDiscountRate: isMember ? memberRate : 1,
+    deliveryFee: orderDeliveryFee
   })
 
   /** 已选中的买赠券带的赠品；订单上只挂一个（服务端也只允许一张买赠券） */
@@ -238,6 +264,31 @@ export default function CheckoutPage() {
     setSubmitting(false)
   }
 
+  // 认证是异步恢复的：user 初值 null，等 cookie 校验回来才填上。
+  // 不挡这一下，刷新结算页会先闪一遍「填写收货信息」的游客表单，
+  // 已登录的用户会以为自己掉登录了。
+  if (authLoading) {
+    return (
+      <div className="page-container pt-4 space-y-3">
+        <div className="card h-24 skeleton" />
+        <div className="card h-32 skeleton" />
+        <div className="card h-20 skeleton" />
+      </div>
+    )
+  }
+
+  // 管理员只做管理与导单，不给下单入口，免得后台数据混进测试单
+  if (user?.role === 'admin') {
+    return (
+      <div className="page-container pt-20 text-center">
+        <div className="text-6xl mb-4">🔒</div>
+        <p className="text-text-light">管理员账号不支持下单</p>
+        <p className="text-text-light text-sm mt-1">请退出后使用顾客账号购买</p>
+        <Link href="/admin" className="btn-primary inline-block mt-6">返回后台</Link>
+      </div>
+    )
+  }
+
   return (
     <div className="pb-28">
       {toast && (
@@ -338,7 +389,7 @@ export default function CheckoutPage() {
         {/* Summary */}
         <div className="card space-y-2">
           <div className="flex justify-between text-sm"><span className="text-text-secondary">商品金额</span><span>¥{itemsAmount.toFixed(2)}</span></div>
-          <div className="flex justify-between text-sm"><span className="text-text-secondary">配送费</span><span>{deliveryFee === 0 ? '免运费' : `¥${deliveryFee.toFixed(2)}`}</span></div>
+          <div className="flex justify-between text-sm"><span className="text-text-secondary">运费</span><span>{deliveryFee === 0 ? '免运费' : `¥${deliveryFee.toFixed(2)}`}</span></div>
           {couponDiscount > 0 && <div className="flex justify-between text-sm"><span className="text-text-secondary">优惠券</span><span className="text-primary-500">-¥{couponDiscount.toFixed(2)}</span></div>}
           {/* 赠品不抵扣金额，所以不进上面的优惠券行，单独列一行让人知道要随单发什么 */}
           {selectedGift && (

@@ -13,6 +13,10 @@ export async function GET(request: Request) {
     const where: any = { status: 'on' }
     if (category) where.category = category
     if (keyword) where.name = { contains: keyword }
+    // 传了 ids 就按 id 批量取：购物车/结算页里的商品是加购时的快照，
+    // 店主改过运费或价格后需要用这份最新数据校准，否则展示金额与实收不符。
+    const ids = (searchParams.get('ids') || '').split(',').map(s => s.trim()).filter(Boolean)
+    if (ids.length) where.id = { in: ids }
 
     const products = await prisma.product.findMany({
       where,

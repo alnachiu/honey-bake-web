@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation'
 import { couponExpireText, couponAmountLabel, couponValueText, claimLimitHint } from '@/lib/utils'
 
 export default function CouponsPage() {
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const [coupons, setCoupons] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -15,9 +15,11 @@ export default function CouponsPage() {
   const [claimingId, setClaimingId] = useState('')
 
   useEffect(() => {
+    // 等认证恢复完再判：user 初值为 null，抢先判会把刷新页面的用户踢去登录页
+    if (authLoading) return
     if (!user) { router.push('/login'); return }
     fetchCoupons()
-  }, [user])
+  }, [user, authLoading])
 
   const fetchCoupons = async () => {
     try {
@@ -55,6 +57,14 @@ export default function CouponsPage() {
   // 免得两边的规则悄悄漂移——上一版这里只认 perUserLimit 一条。
   const isExhausted = (c: any) => c.soldOut || c.reachedLimit
 
+  if (authLoading) {
+    return (
+      <div className="page-container pt-4 space-y-3">
+        <div className="h-8 skeleton w-1/2" />
+        {[1, 2, 3].map(i => <div key={i} className="h-24 skeleton rounded-2xl" />)}
+      </div>
+    )
+  }
   if (!user) return null
 
   return (

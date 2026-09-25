@@ -4,27 +4,35 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { formatDate, getOrderStatusText } from '@/lib/utils'
 
 const STATUS_COLORS: Record<string, string> = { pending: '#E6A23C', paid: '#67C23A', making: '#409EFF', delivering: '#E8806A', completed: '#909399', cancelled: '#C0C4CC' }
 const STATUS_ICONS: Record<string, string> = { pending: '⏳', paid: '👩‍🍳', making: '👨‍🍳', delivering: '🚚', completed: '✅', cancelled: '❌' }
 
-const STATUS_DESC: Record<string, string> = { pending: '请在30分钟内完成支付', paid: '店主正在精心准备您的订单', making: '正在制作中，请耐心等待', delivering: '您的订单正在配送中', completed: '感谢您的购买~', cancelled: '订单已取消' }
+const STATUS_DESC: Record<string, string> = { pending: '请扫码付款后点下方「已扫码支付」', paid: '店主正在精心准备您的订单', making: '正在制作中，请耐心等待', delivering: '您的订单正在配送中', completed: '感谢您的购买~', cancelled: '订单已取消' }
 
 export default function OrderDetailPage() {
   const { id } = useParams()
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const [order, setOrder] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [paymentQR, setPaymentQR] = useState('')
+  const [payNotifying, setPayNotifying] = useState(false)
+  const [toast, setToast] = useState('')
 
   useEffect(() => {
+    // 等认证恢复完再判，否则刷新时 user 还是 null，会被误踢去登录页
+    if (authLoading) return
     if (!user) { router.push('/login'); return }
     fetchOrder()
-  }, [id, user])
+  }, [id, user, authLoading])
 
-  const fetchOrder = async () => {
+  // 店主在后台改了状态，这里 10 秒内自己跟上，不用用户手动刷新
+  useAutoRefresh(() => fetchOrder(true), 10000, !authLoading && !!user)
+
+  const fetchOrder = async (silent = false) => {
     try {
       const [orderRes, settingsRes] = await Promise.all([
         fetch(`/api/orders/${id}`),
@@ -35,7 +43,8 @@ export default function OrderDetailPage() {
       setOrder(orderData.order)
       if (settingsData.settings?.paymentQR) setPaymentQR(settingsData.settings.paymentQR)
     } catch (err) { console.error(err) }
-    setLoading(false)
+    // 轮询时不要动 loading：否则每 10 秒整页闪一次骨架屏
+    if (!silent) setLoading(false)
   }
 
   const updateStatus = async (status: string) => {
@@ -43,6 +52,28 @@ export default function OrderDetailPage() {
       await fetch(`/api/orders/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
       fetchOrder()
     } catch (err) { console.error(err) }
+  }
+
+  /** 「已扫码支付」：只是告诉店主「我已经转账了」，真正的收款确认在后台。
+   *  不能像以前那样直接把订单置为 paid——那个请求会被服务端 403 挡掉
+   *  （非管理员不得确认付款），点了等于没反应。 */
+  const claimPaid = async () => {
+    if (payNotifying) return
+    setPayNotifying(true)
+    try {
+      const res = await fetch(`/api/orders/${id}/pay-notify`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        setToast(data.error || '通知店主失败，请重试')
+      } else {
+        setToast(data.alreadyNotified ? '已通知过店主了，请耐心等待' : '✅ 已通知店主，等待确认收款')
+        fetchOrder(true)   // 立刻把 payClaimedAt 反映到按钮状态上
+      }
+    } catch (err) {
+      setToast('网络异常，请重试')
+    }
+    setPayNotifying(false)
+    setTimeout(() => setToast(''), 2500)
   }
 
   if (loading) return <div className="page-container pt-4"><div className="h-24 skeleton rounded-2xl mb-4" /><div className="h-32 skeleton rounded-2xl mb-4" /><div className="h-40 skeleton rounded-2xl" /></div>
@@ -53,6 +84,12 @@ export default function OrderDetailPage() {
 
   return (
     <div className="pb-28">
+      {toast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-black/70 text-white px-5 py-2.5 rounded-xl text-sm toast-enter">
+          {toast}
+        </div>
+      )}
+
       {/* Status Bar */}
       <div className="px-4 pt-4">
         <div className="rounded-2xl p-5 text-white" style={{ background: statusColor }}>
@@ -71,11 +108,16 @@ export default function OrderDetailPage() {
         <div className="px-4 mt-3">
           <div className="card flex flex-col items-center py-5">
             <p className="text-sm font-medium text-text-primary mb-1">💳 微信扫码付款</p>
-            <p className="text-xs text-text-light mb-4">保存二维码到微信扫码支付，支付后联系店主确认</p>
+            <p className="text-xs text-text-light mb-4">保存二维码到微信扫码支付，付完点下方「已扫码支付」告知店主</p>
             <div className="w-44 h-44 bg-white rounded-xl p-2 border border-warm-200 shadow-sm">
               <img src={paymentQR} alt="微信收款码" className="w-full h-full object-contain" />
             </div>
             <p className="text-xs text-text-light mt-3">金额：<span className="text-primary-500 font-semibold text-sm">¥{order.totalAmount.toFixed(2)}</span></p>
+            {order.payClaimedAt && (
+              <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1 mt-3">
+                已于 {formatDate(order.payClaimedAt)} 告知店主，等待确认收款
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -132,7 +174,7 @@ export default function OrderDetailPage() {
           {order.remark && <div className="flex justify-between text-xs"><span className="text-text-light">备注</span><span className="text-text-primary">{order.remark}</span></div>}
           <div className="border-t border-warm-100 pt-2 space-y-1">
             <div className="flex justify-between text-xs"><span className="text-text-light">商品金额</span><span>¥{order.itemsAmount?.toFixed(2)}</span></div>
-            <div className="flex justify-between text-xs"><span className="text-text-light">配送费</span><span>{order.deliveryFee > 0 ? `¥${order.deliveryFee.toFixed(2)}` : '免运费'}</span></div>
+            <div className="flex justify-between text-xs"><span className="text-text-light">运费</span><span>{order.deliveryFee > 0 ? `¥${order.deliveryFee.toFixed(2)}` : '免运费'}</span></div>
             {order.couponDiscount > 0 && <div className="flex justify-between text-xs"><span className="text-text-light">优惠券</span><span className="text-primary-500">-¥{order.couponDiscount.toFixed(2)}</span></div>}
             {order.memberDiscount > 0 && <div className="flex justify-between text-xs"><span className="text-text-light">💎 会员折扣</span><span className="text-primary-500">-¥{order.memberDiscount.toFixed(2)}</span></div>}
             <div className="flex justify-between text-sm font-semibold pt-1"><span>实付金额</span><span className="text-primary-500">¥{order.totalAmount.toFixed(2)}</span></div>
@@ -146,7 +188,16 @@ export default function OrderDetailPage() {
           {order.status === 'pending' && (
             <>
               <button onClick={() => updateStatus('cancelled')} className="flex-1 py-2.5 rounded-full border border-warm-300 text-sm text-text-secondary">取消订单</button>
-              <button onClick={() => updateStatus('paid')} className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm">去支付 ¥{order.totalAmount.toFixed(2)}</button>
+              {order.payClaimedAt ? (
+                // 已经声明过付款就置灰：重复点只会重复通知店主，没有意义
+                <button disabled className="flex-1 py-2.5 rounded-full bg-warm-200 text-text-light text-sm">
+                  已扫码支付 ¥{order.totalAmount.toFixed(2)}
+                </button>
+              ) : (
+                <button onClick={claimPaid} disabled={payNotifying} className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm disabled:opacity-60">
+                  {payNotifying ? '通知中...' : `已扫码支付 ¥${order.totalAmount.toFixed(2)}`}
+                </button>
+              )}
             </>
           )}
           {order.status === 'delivering' && (

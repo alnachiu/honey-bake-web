@@ -28,9 +28,23 @@ export async function PUT(request: Request) {
     }
 
     if (action === 'cancel') {
-      const cancelled = await prisma.membershipOrder.update({
-        where: { id: orderId },
-        data: { status: 'cancelled' }
+      // 一并给买家一条通知：店主点「未收到款」后，用户在会员卡页只会看到状态
+      // 变成「已取消」，不说明原因，很容易以为是系统把单弄丢了。
+      const cancelled = await prisma.$transaction(async tx => {
+        const updated = await tx.membershipOrder.update({
+          where: { id: orderId },
+          data: { status: 'cancelled' }
+        })
+        await tx.notification.create({
+          data: {
+            userId: order.userId,
+            title: '会员卡订单未确认收款',
+            content: `「${order.planName}」未收到款项，订单 #${order.orderNo.slice(-8)} 已作废。如已付款请联系店主核对。`,
+            type: 'member',
+            link: '/member'
+          }
+        })
+        return updated
       })
       return NextResponse.json({ order: cancelled })
     }

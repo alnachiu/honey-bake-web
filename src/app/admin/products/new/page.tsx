@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { useCategories } from '@/hooks/useCategories'
 
 export default function NewProductPage() {
   const router = useRouter()
+  const categories = useCategories()
   const [form, setForm] = useState({
     name: '', price: '', originalPrice: '', deliveryFee: '0',
     category: '曲奇', unit: '份', stock: '0',
@@ -14,6 +16,16 @@ export default function NewProductPage() {
   })
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+
+  // 分类是异步取回来的，店主也可能把默认的「曲奇」删掉。
+  // 当前值不在列表里就落到第一项——否则 <select> 会显示空白，
+  // 而提交上去的仍是那个已经失效的旧分类名。
+  useEffect(() => {
+    if (!categories.length) return
+    if (!categories.includes(form.category)) {
+      setForm((p: any) => ({ ...p, category: categories[0] }))
+    }
+  }, [categories])
   const mainImgInputRef = useRef<HTMLInputElement>(null)
   const replaceImgIndexRef = useRef<number>(-1)
   const detailImgInputRef = useRef<HTMLInputElement>(null)
@@ -142,17 +154,18 @@ export default function NewProductPage() {
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div><label className="text-xs text-text-secondary block mb-1">分类</label>
+              {/* 选项来自「后台 → 排版 → 分类」，此前写死四个，新增的分类选不到 */}
               <select className="input-field" value={form.category} onChange={e => setForm((p: any) => ({...p, category: e.target.value}))}>
-                <option>曲奇</option><option>糖果</option><option>零食</option><option>礼盒</option>
+                {categories.map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
             <div><label className="text-xs text-text-secondary block mb-1">单位</label><input className="input-field" value={form.unit} onChange={e => setForm((p: any) => ({...p, unit: e.target.value}))} /></div>
             <div><label className="text-xs text-text-secondary block mb-1">库存</label><input type="number" className="input-field" value={form.stock} onChange={e => setForm((p: any) => ({...p, stock: e.target.value}))} /></div>
           </div>
           <div className="grid grid-cols-1 gap-3">
-            <div><label className="text-xs text-text-secondary block mb-1">邮费（每份）</label>
+            <div><label className="text-xs text-text-secondary block mb-1">运费（该商品）</label>
               <input type="number" step="0.01" className="input-field" placeholder="0" value={form.deliveryFee} onChange={e => setForm((p: any) => ({...p, deliveryFee: e.target.value}))} />
-              <p className="text-[10px] text-text-light mt-0.5">每个商品单独计算邮费，总价 = (单价 × 数量) + 邮费</p>
+              <p className="text-[10px] text-text-light mt-0.5">整单运费取所有商品中最高的一个，不叠加、不乘数量。全部为 0 则整单免运费。</p>
             </div>
           </div>
         </div>

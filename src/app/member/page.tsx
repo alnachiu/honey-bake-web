@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { formatDate, isMemberActive, isValidPhone, memberRemainDays } from '@/lib/utils'
 
 const STATUS_TEXT: Record<string, string> = {
@@ -14,7 +15,7 @@ const STATUS_TEXT: Record<string, string> = {
 
 export default function MemberPage() {
   const router = useRouter()
-  const { user, refreshUser } = useAuth()
+  const { user, loading: authLoading, refreshUser } = useAuth()
   const [plans, setPlans] = useState<any[]>([])
   const [orders, setOrders] = useState<any[]>([])
   const [memberExpire, setMemberExpire] = useState<string | null>(null)
@@ -24,6 +25,7 @@ export default function MemberPage() {
   const [buyingId, setBuyingId] = useState('')
   const [payOrder, setPayOrder] = useState<any>(null)
   const [message, setMessage] = useState('')
+  const [claiming, setClaiming] = useState(false)
   // 绑定手机号：手机号是会员卡的凭证，没绑定就不让开卡（服务端也会挡）
   const [showBindModal, setShowBindModal] = useState(false)
   const [phoneInput, setPhoneInput] = useState('')
@@ -32,11 +34,16 @@ export default function MemberPage() {
   const [pendingPlan, setPendingPlan] = useState<any>(null)
 
   useEffect(() => {
+    // 等认证恢复完再判：user 初值是 null，抢先判会把刷新页面的会员踢去登录页
+    if (authLoading) return
     if (!user) { router.push('/login'); return }
     fetchAll()
-  }, [user])
+  }, [user, authLoading])
 
-  const fetchAll = async () => {
+  // 店主在后台点「确认收款」后，这里 10 秒内自动变成会员，不用用户手动刷新
+  useAutoRefresh(() => fetchAll(true), 10000, !authLoading && !!user)
+
+  const fetchAll = async (silent = false) => {
     try {
       const [plansRes, ordersRes, settingsRes] = await Promise.all([
         fetch('/api/membership/plans'),
@@ -54,7 +61,8 @@ export default function MemberPage() {
       const rate = settingsData.settings?.memberDiscount
       if (Number.isFinite(rate) && rate > 0 && rate <= 1) setMemberRate(rate)
     } catch (err) { console.error(err) }
-    setLoading(false)
+    // 轮询时不闪骨架屏
+    if (!silent) setLoading(false)
   }
 
   // 真正创建购买单。绑定流程也要直接调它，不能再走 buyPlan——
@@ -78,6 +86,28 @@ export default function MemberPage() {
       setMessage('下单失败，请稍后重试')
     }
     setBuyingId('')
+    setTimeout(() => setMessage(''), 2500)
+  }
+
+  /** 「我已付款」：只是告诉店主「我转账了」，开卡仍由店主在后台确认收款。
+   *  此前这个按钮只关弹窗，店主那边毫无感知，消费者以为点完就完事了。 */
+  const claimPaid = async () => {
+    if (!payOrder || claiming) return
+    setClaiming(true)
+    try {
+      const res = await fetch(`/api/membership/orders/${payOrder.id}/notify`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        setMessage(data.error || '通知店主失败，请重试')
+      } else {
+        setMessage(data.alreadyNotified ? '已通知过店主了，请耐心等待' : '✅ 已通知店主，等待确认收款')
+        setPayOrder(null)
+        fetchAll(true)
+      }
+    } catch (err) {
+      setMessage('网络异常，请重试')
+    }
+    setClaiming(false)
     setTimeout(() => setMessage(''), 2500)
   }
 
@@ -132,7 +162,26 @@ export default function MemberPage() {
   // 折扣率 0.95 → 显示「95 折」；用 round 避免 0.9*10=9.000000000000002 这种浮点毛刺
   const discountText = memberRate < 1 ? `${Math.round(memberRate * 100) / 10} 折` : ''
   const discountPercent = memberRate < 1 ? `${Math.round((1 - memberRate) * 100)}%` : ''
+  const isAdmin = user?.role === 'admin'
 
+  // 店主确认收款后会员到期时间才由服务端回传，此时页面已经变成会员了，
+  // 但 Header 的会员角标读的是 AuthContext 里的 user.memberExpire，得让它也刷新一次。
+  // 依赖 isMember 而非 memberExpire：状态翻转才触发，不会来回打接口。
+  useEffect(() => {
+    if (isMember) refreshUser()
+  }, [isMember])
+
+  // 认证没恢复完时不要 return null：那会在刷新瞬间白屏，
+  // 且已登录用户会误以为自己被登出了。
+  if (authLoading) {
+    return (
+      <div className="page-container pt-4 space-y-3">
+        <div className="h-32 skeleton rounded-2xl" />
+        <div className="h-24 skeleton rounded-2xl" />
+        <div className="h-24 skeleton rounded-2xl" />
+      </div>
+    )
+  }
   if (!user) return null
 
   return (
@@ -215,13 +264,18 @@ export default function MemberPage() {
                 <div className="text-right flex-shrink-0 mr-1">
                   <p className="text-lg font-bold text-primary-500">¥{p.price.toFixed(2)}</p>
                 </div>
-                <button
-                  onClick={() => buyPlan(p)}
-                  disabled={buyingId === p.id}
-                  className="text-xs px-4 py-2 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white disabled:opacity-60 flex-shrink-0"
-                >
-                  {buyingId === p.id ? '处理中...' : isMember ? '续费' : '立即开通'}
-                </button>
+                {isAdmin ? (
+                  // 管理员只管理网站与导单，不开卡也不下单
+                  <span className="text-[10px] px-3 py-2 rounded-full bg-warm-100 text-text-light flex-shrink-0">管理员不可开卡</span>
+                ) : (
+                  <button
+                    onClick={() => buyPlan(p)}
+                    disabled={buyingId === p.id}
+                    className="text-xs px-4 py-2 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white disabled:opacity-60 flex-shrink-0"
+                  >
+                    {buyingId === p.id ? '处理中...' : isMember ? '续费' : '立即开通'}
+                  </button>
+                )}
               </div>
             )
           })}
@@ -242,11 +296,14 @@ export default function MemberPage() {
                 <div className="text-right flex-shrink-0">
                   <p className="text-sm text-primary-500 font-medium">¥{o.price.toFixed(2)}</p>
                   <p className={`text-[10px] mt-0.5 ${o.status === 'paid' ? 'text-green-500' : o.status === 'cancelled' ? 'text-text-light' : 'text-amber-500'}`}>
-                    {STATUS_TEXT[o.status] || o.status}
+                    {/* 已点过「我已付款」的单独说明，免得用户以为自己没点上 */}
+                    {o.status === 'pending' && o.payClaimedAt ? '已告知店主，待确认收款' : STATUS_TEXT[o.status] || o.status}
                   </p>
                 </div>
-                {o.status === 'pending' && (
-                  <button onClick={() => setPayOrder(o)} className="text-[10px] px-2.5 py-1 rounded-full bg-primary-500 text-white flex-shrink-0">去付款</button>
+                {o.status === 'pending' && !isAdmin && (
+                  <button onClick={() => setPayOrder(o)} className="text-[10px] px-2.5 py-1 rounded-full bg-primary-500 text-white flex-shrink-0">
+                    {o.payClaimedAt ? '查看付款码' : '去付款'}
+                  </button>
                 )}
               </div>
             ))}
@@ -307,13 +364,15 @@ export default function MemberPage() {
                   金额：<span className="text-primary-500 font-semibold text-sm">¥{payOrder.price.toFixed(2)}</span>
                 </p>
                 <p className="text-[10px] text-text-light mt-2 text-center leading-relaxed">
-                  付款后请联系店主确认，确认后会员自动开通
+                  付款后点下方「我已付款」告知店主，店主核对到账后会员自动开通
                 </p>
               </div>
             ) : (
               <p className="text-xs text-text-light py-6 text-center">店主还没有上传收款码，请直接联系店主付款</p>
             )}
-            <button onClick={() => setPayOrder(null)} className="btn-primary w-full text-sm py-2 mt-4">我已付款</button>
+            <button onClick={claimPaid} disabled={claiming} className="btn-primary w-full text-sm py-2 mt-4">
+              {claiming ? '通知中...' : '我已付款'}
+            </button>
           </div>
         </div>
       )}

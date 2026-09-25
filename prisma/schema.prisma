@@ -64,6 +64,13 @@ model Order {
   remark         String      @default("")
   addressId      String?
   address        Address?    @relation(fields: [addressId], references: [id])
+  // 下单当时是否为会员的快照。会员折扣率可能被店主设为 1（不打折），
+  // 那时 memberDiscount 恒为 0，事后无法反推身份，所以必须在成单时落库，
+  // 否则导出的「是否会员」列只能靠 memberDiscount > 0 猜。
+  wasMember      Boolean     @default(false)
+  // 消费者点击「已扫码支付」的时刻。仅代表用户声明已转账，
+  // 收款与否仍由店主在后台确认（status 才是账面上的事实）。
+  payClaimedAt   DateTime?
   status         String      @default("pending")
   trackingNo     String      @default("")
   payTime        DateTime?
@@ -197,6 +204,9 @@ model MembershipOrder {
   days      Int
   status    String         @default("pending") // pending | paid | cancelled
   payTime   DateTime?
+  // 消费者点击「我已付款」的时刻，用于告知店主「对方声称已转账」，
+  // 与上面 Order.payClaimedAt 同理：声明不等于收款，开卡仍靠后台确认。
+  payClaimedAt DateTime?
   createdAt DateTime       @default(now())
 
   @@index([userId, status])
@@ -208,7 +218,7 @@ model Notification {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String
   content   String   @default("")
-  type      String   @default("system") // system | coupon | member
+  type      String   @default("system") // system | coupon | member | order（order = 订单/收款相关，含发给店主的待办通知）
   link      String   @default("")
   read      Boolean  @default(false)
   createdAt DateTime @default(now())

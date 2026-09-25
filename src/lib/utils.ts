@@ -301,6 +301,16 @@ export interface OrderAmountInput {
   coupons?: CouponLike[] | null
   /** 会员折扣率：1 = 非会员或不打折，0.95 = 95 折 */
   memberDiscountRate?: number
+  /**
+   * 整单运费（已由 calcOrderDeliveryFee 算好的单一金额）。
+   * 这里刻意收的是「算好的数」而不是商品明细：运费规则（取最高）只应有一个实现，
+   * 放进来重算一遍就等于开了第二个入口，迟早和展示层漂移。
+   *
+   * **必填**：可选的话，漏传会静默变成 0，也就是全单包邮——这类事故在线上
+   * 表现为「莫名其妙不收运费」，且编译器不会提醒。设为必填后，任何新增调用方
+   * 都必须显式交出运费，成本一行，换的是这个洞不会被悄悄打开。
+   */
+  deliveryFee: number
 }
 
 export interface OrderAmountResult {
@@ -312,19 +322,42 @@ export interface OrderAmountResult {
 }
 
 /**
+ * 整单运费 = 订单内各商品在后台配置的运费中的**最高值**。
+ *
+ * 刻意与数量无关：买两份饼干并不让运费翻倍，运费是「这一单要送出去」的成本。
+ * 所以饼干配 5 元、蛋糕配 8 元时，无论各买几份，整单都是 8 元；
+ * 两者都配 0 元时整单就是 0 元（免运费）。
+ *
+ * 调用方传的是「商品及其运费」，前端从购物车快照取、服务端从 Product 表取，
+ * 两边都走这一个函数，避免出现第二个运费口径。
+ */
+export function calcOrderDeliveryFee(items: { deliveryFee?: number }[] | null | undefined): number {
+  if (!items || !items.length) return 0
+  const max = items.reduce((best, item) => {
+    const fee = Number(item?.deliveryFee)
+    if (!Number.isFinite(fee) || fee <= 0) return best
+    return fee > best ? fee : best
+  }, 0)
+  return Math.round(max * 100) / 100
+}
+
+/**
  * 订单金额的**唯一**计算入口（前端结算页与下单接口共用，避免两边算法漂移）。
  *
  * 顺序：① 优惠券（门槛按原始商品金额判断，先满减再打折）
  *      ② 会员折扣（作用于券后金额）
- *      ③ 运费（按原始商品金额判断是否满 68 免运费）
+ *      ③ 加上整单运费（由调用方用 calcOrderDeliveryFee 算好后传入）
  *
  * 会员折扣放在最后，是为了让优惠券门槛不受会员打折影响——
  * 否则会员会因为「打完折金额掉到门槛以下」而用不了本该能用的券。
+ *
+ * 运费与商品金额、是否会员都无关，所以放哪一步都不影响前三项的结果。
  */
 export function calcOrderAmount({
   itemsAmount,
   coupons,
-  memberDiscountRate = 1
+  memberDiscountRate = 1,
+  deliveryFee
 }: OrderAmountInput): OrderAmountResult {
   const { discount: couponDiscount } = calcCouponsDiscount(itemsAmount, coupons)
 
@@ -332,10 +365,14 @@ export function calcOrderAmount({
   const rate = Number.isFinite(memberDiscountRate) && memberDiscountRate > 0 ? memberDiscountRate : 1
   const memberDiscount = Math.round(afterCoupon * (1 - rate) * 100) / 100
 
-  const deliveryFee = itemsAmount >= 68 ? 0 : 5
-  const totalAmount = Math.max(0, Math.round((afterCoupon - memberDiscount + deliveryFee) * 100) / 100)
+  const fee = Number.isFinite(deliveryFee) && deliveryFee > 0 ? Math.round(deliveryFee * 100) / 100 : 0
 
-  return { itemsAmount, couponDiscount, memberDiscount, deliveryFee, totalAmount }
+  // 优惠只作用于商品金额，运费不参与打折——先把商品侧夹到 0 再加运费，
+  // 否则「券比商品还贵」的极端单会让优惠顺手把运费也抹掉。
+  const goodsPayable = Math.max(0, Math.round((afterCoupon - memberDiscount) * 100) / 100)
+  const totalAmount = Math.round((goodsPayable + fee) * 100) / 100
+
+  return { itemsAmount, couponDiscount, memberDiscount, deliveryFee: fee, totalAmount }
 }
 
 /** 当前是否处于会员有效期 */

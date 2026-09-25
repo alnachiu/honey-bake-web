@@ -46,7 +46,7 @@ export default function ProductCard({ product }: ProductCardProps) {
               <span className="text-text-light text-xs line-through ml-1.5">¥{product.originalPrice.toFixed(2)}</span>
             )}
             {product.deliveryFee > 0 && (
-              <p className="text-[10px] text-text-light">+邮费¥{Number(product.deliveryFee).toFixed(2)}</p>
+              <p className="text-[10px] text-text-light">+运费¥{Number(product.deliveryFee).toFixed(2)}</p>
             )}
           </div>
           <span className="text-text-light text-[10px]">已售{product.sales}{product.unit}</span>

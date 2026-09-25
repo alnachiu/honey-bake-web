@@ -11,7 +11,7 @@ export default function ProductDetailPage() {
   const { id } = useParams()
   const router = useRouter()
   const { addItem } = useCart()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const [product, setProduct] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [quantity, setQuantity] = useState(1)
@@ -40,10 +40,12 @@ export default function ProductDetailPage() {
 
   const deliveryFee = product.deliveryFee || 0
   const itemTotal = product.price * quantity
-  const grandTotal = itemTotal + deliveryFee
+  const isAdmin = user?.role === 'admin'
 
   const handleAddToCart = () => {
+    if (authLoading) return   // 认证还没回来，此时 user 必为 null，别急着跳登录页
     if (!user) { router.push('/login'); return }
+    if (isAdmin) return
     for (let i = 0; i < quantity; i++) {
       addItem({ id: product.id, name: product.name, price: product.price, deliveryFee: product.deliveryFee || 0, image: images[0] || '', unit: product.unit, stock: product.stock })
     }
@@ -52,7 +54,9 @@ export default function ProductDetailPage() {
   }
 
   const handleBuyNow = () => {
+    if (authLoading) return
     if (!user) { router.push('/login'); return }
+    if (isAdmin) return
     addItem({ id: product.id, name: product.name, price: product.price, deliveryFee: product.deliveryFee || 0, image: images[0] || '', unit: product.unit, stock: product.stock })
     router.push('/cart')
   }
@@ -84,7 +88,7 @@ export default function ProductDetailPage() {
           <h1 className="text-lg font-semibold text-text-primary">{product.name}</h1>
           {product.description && <p className="text-sm text-text-secondary mt-1.5">{product.description}</p>}
           {deliveryFee > 0 && (
-            <p className="text-xs text-text-light mt-2">🚚 邮费：¥{deliveryFee.toFixed(2)}（每份）</p>
+            <p className="text-xs text-text-light mt-2">🚚 该商品运费 ¥{deliveryFee.toFixed(2)}，整单运费取所有商品中最高的一个</p>
           )}
           {tags.length > 0 && (
             <div className="flex gap-1.5 mt-3">
@@ -108,11 +112,15 @@ export default function ProductDetailPage() {
           {/* Price breakdown */}
           <div className="mt-3 pt-3 border-t border-warm-100 space-y-1 text-xs text-text-secondary">
             <div className="flex justify-between"><span>商品小计</span><span>¥{itemTotal.toFixed(2)}</span></div>
-            {deliveryFee > 0 && <div className="flex justify-between"><span>邮费</span><span>¥{deliveryFee.toFixed(2)}</span></div>}
             <div className="flex justify-between text-sm font-semibold text-text-primary pt-1 border-t border-warm-100">
               <span>合计</span>
-              <span className="text-primary-500">¥{grandTotal.toFixed(2)}</span>
+              <span className="text-primary-500">¥{itemTotal.toFixed(2)}</span>
             </div>
+            {/* 这里不再把运费加进合计：整单运费取决于订单里其他商品，
+                单品页算不出最终值，硬加会与购物车/结算页对不上。 */}
+            <p className="text-[10px] text-text-light pt-1">
+              不含运费 · 本商品运费 ¥{deliveryFee.toFixed(2)}，整单取所有商品中最高的一项，不叠加、不乘数量
+            </p>
           </div>
         </div>
 
@@ -142,12 +150,21 @@ export default function ProductDetailPage() {
             <span className="text-xl">🏠</span>
             <span>首页</span>
           </Link>
-          <button onClick={() => router.push('/cart')} className="flex flex-col items-center text-xs text-text-secondary">
-            <span className="text-xl">🛒</span>
-            <span>购物车</span>
-          </button>
-          <button onClick={handleAddToCart} className="flex-1 py-2.5 rounded-full border-2 border-primary-500 text-primary-500 font-medium text-sm">加入购物车</button>
-          <button onClick={handleBuyNow} className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white font-medium text-sm">立即购买</button>
+          {isAdmin ? (
+            // 管理员只做管理，不给下单入口，避免后台数据混进测试单
+            <Link href="/admin/products" className="flex-1 py-2.5 rounded-full bg-warm-100 text-text-secondary font-medium text-sm text-center">
+              管理员账号不支持下单，去管理商品
+            </Link>
+          ) : (
+            <>
+              <button onClick={() => router.push('/cart')} className="flex flex-col items-center text-xs text-text-secondary">
+                <span className="text-xl">🛒</span>
+                <span>购物车</span>
+              </button>
+              <button onClick={handleAddToCart} className="flex-1 py-2.5 rounded-full border-2 border-primary-500 text-primary-500 font-medium text-sm">加入购物车</button>
+              <button onClick={handleBuyNow} className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white font-medium text-sm">立即购买</button>
+            </>
+          )}
         </div>
       </div>
 

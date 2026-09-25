@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import { useCategories } from '@/hooks/useCategories'
 
 export default function EditProductPage() {
   const { id } = useParams()
   const router = useRouter()
+  const categories = useCategories()
   const [form, setForm] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -162,15 +164,18 @@ export default function EditProductPage() {
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div><label className="text-xs text-text-secondary block mb-1">分类</label>
+              {/* 选项来自「后台 → 排版 → 分类」。商品已存的那个分类若被店主从列表里删了，
+                  仍要补成一个选项——否则打开编辑页会静默换成别的分类。 */}
               <select className="input-field" value={form.category} onChange={e => setForm((p: any) => ({...p, category: e.target.value}))}>
-                <option>曲奇</option><option>糖果</option><option>零食</option><option>礼盒</option>
+                {(categories.includes(form.category) ? categories : [form.category, ...categories]).map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
             <div><label className="text-xs text-text-secondary block mb-1">单位</label><input className="input-field" value={form.unit} onChange={e => setForm((p: any) => ({...p, unit: e.target.value}))} /></div>
             <div><label className="text-xs text-text-secondary block mb-1">库存</label><input type="number" className="input-field" value={form.stock} onChange={e => setForm((p: any) => ({...p, stock: e.target.value}))} /></div>
           </div>
-          <div><label className="text-xs text-text-secondary block mb-1">邮费（每份）</label>
+          <div><label className="text-xs text-text-secondary block mb-1">运费（该商品）</label>
             <input type="number" step="0.01" className="input-field" value={form.deliveryFee} onChange={e => setForm((p: any) => ({...p, deliveryFee: e.target.value}))} />
+            <p className="text-[10px] text-text-light mt-0.5">整单运费取所有商品中最高的一个，不叠加、不乘数量。全部为 0 则整单免运费。</p>
           </div>
         </div>
         <div className="card space-y-3">

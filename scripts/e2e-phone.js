@@ -190,7 +190,7 @@ async function main() {
   if (guestOrder.data.order) {
     const o = guestOrder.data.order
     ok('游客单 memberDiscount=0（须先登录）', o.memberDiscount === 0, `memberDiscount=${o.memberDiscount}`)
-    ok('游客实付 = 原价 200（满68免运费）', Math.abs(o.totalAmount - 200) < 0.01, `total=${o.totalAmount}`)
+    ok('游客实付 = 原价 200（seed 商品运费全为 0 → 整单免运费）', Math.abs(o.totalAmount - 200) < 0.01, `total=${o.totalAmount}`)
   }
 
   const guestBad = await makeClient().req('/api/orders/guest', {

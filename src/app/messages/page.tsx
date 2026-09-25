@@ -4,34 +4,42 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { formatDate } from '@/lib/utils'
 
 const TYPE_ICON: Record<string, string> = {
   coupon: '🎫',
   member: '💎',
+  order: '📋',
   system: '🔔'
 }
 
 export default function MessagesPage() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const [list, setList] = useState<any[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // 等认证恢复完再判，否则刷新页面时 user 还是 null，会被误踢去登录页
+    if (authLoading) return
     if (!user) { router.push('/login'); return }
     fetchMessages()
-  }, [user])
+  }, [user, authLoading])
 
-  const fetchMessages = async () => {
+  // 新消息（订单状态变更、收款待办）要自己冒出来，不用用户反复进出页面
+  useAutoRefresh(() => fetchMessages(true), 15000, !authLoading && !!user)
+
+  const fetchMessages = async (silent = false) => {
     try {
       const res = await fetch('/api/notifications')
       const data = await res.json()
       setList(data.notifications || [])
       setUnreadCount(data.unreadCount || 0)
     } catch (err) { console.error(err) }
-    setLoading(false)
+    // 轮询时不闪骨架屏：否则整页每 15 秒抖一下
+    if (!silent) setLoading(false)
   }
 
   const markAllRead = async () => {
@@ -61,6 +69,14 @@ export default function MessagesPage() {
     if (n.link) router.push(n.link)
   }
 
+  if (authLoading) {
+    return (
+      <div className="page-container pt-4 space-y-3">
+        <div className="h-8 skeleton w-1/3" />
+        {[1, 2, 3].map(i => <div key={i} className="h-20 skeleton rounded-2xl" />)}
+      </div>
+    )
+  }
   if (!user) return null
 
   return (

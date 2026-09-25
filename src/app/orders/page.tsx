@@ -4,24 +4,32 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 
 const TABS = ['全部', '待付款', '待制作', '配送中', '已完成']
 const STATUS_MAP: Record<string, string> = { '全部': '', '待付款': 'pending', '待制作': 'paid', '配送中': 'delivering', '已完成': 'completed' }
 
 export default function OrdersPage() {
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const [orders, setOrders] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('全部')
 
   useEffect(() => {
+    // 必须等认证恢复完再判：user 初值就是 null，抢先判会把
+    // 带着有效 cookie 的已登录用户直接踢到登录页（刷新即掉登录的根因）。
+    if (authLoading) return
     if (!user) { router.push('/login'); return }
     fetchOrders()
-  }, [user, tab])
+  }, [user, authLoading, tab])
 
-  const fetchOrders = async () => {
-    setLoading(true)
+  // 店主改状态后这里要自己变，不用用户手动下拉刷新
+  useAutoRefresh(() => fetchOrders(true), 15000, !!user)
+
+  const fetchOrders = async (silent = false) => {
+    // 轮询走 silent：不能每次 setLoading(true)，否则列表每 15 秒闪一遍骨架屏
+    if (!silent) setLoading(true)
     try {
       const params = new URLSearchParams()
       const status = STATUS_MAP[tab]
@@ -30,7 +38,7 @@ export default function OrdersPage() {
       const data = await res.json()
       setOrders(data.orders || [])
     } catch (err) { console.error(err) }
-    setLoading(false)
+    if (!silent) setLoading(false)
   }
 
   const cancelOrder = async (id: string) => {
@@ -52,6 +60,15 @@ export default function OrdersPage() {
   const getStatusText = (s: string) => ({ pending: '待付款', paid: '待制作', making: '制作中', delivering: '配送中', completed: '已完成', cancelled: '已取消' }[s] || s)
   const getStatusColor = (s: string) => ({ pending: 'text-yellow-500', paid: 'text-green-500', making: 'text-blue-500', delivering: 'text-primary-500', completed: 'text-text-light', cancelled: 'text-text-light' }[s] || '')
 
+  // 认证还没回来时别急着 return null：那样刷新会白屏一下，
+  // 而且空屏期间用户不知道发生了什么。渲染骨架屏顶上。
+  if (authLoading) {
+    return (
+      <div className="page-container pt-4 space-y-3">
+        {[1, 2, 3].map(i => <div key={i} className="card h-28 skeleton" />)}
+      </div>
+    )
+  }
   if (!user) return null
 
   return (
@@ -105,7 +122,12 @@ export default function OrdersPage() {
               {order.status === 'pending' && (
                 <div className="flex gap-2 mt-3">
                   <button onClick={(e) => { e.preventDefault(); cancelOrder(order.id) }} className="flex-1 py-2 rounded-full border border-warm-300 text-xs text-text-secondary">取消</button>
-                  <button onClick={(e) => { e.preventDefault(); /* mock pay */ fetch(`/api/orders/${order.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'paid' }) }).then(() => fetchOrders()) }} className="flex-1 py-2 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-xs">去支付</button>
+                  {/* 这里不再自行把订单置为 paid：收款与否由店主在后台确认，
+                      消费者端只能「声明已付款」（走详情页的已扫码支付）。
+                      按钮只是个视觉入口，点它靠外层 Link 跳转到详情页看付款码。 */}
+                  <span className="flex-1 py-2 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-xs text-center">
+                    去付款
+                  </span>
                 </div>
               )}
               {order.status === 'delivering' && (

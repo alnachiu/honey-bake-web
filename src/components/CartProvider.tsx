@@ -1,6 +1,7 @@
 'use client'
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { calcOrderDeliveryFee } from '@/lib/utils'
 
 interface CartItem {
   id: string
@@ -41,8 +42,11 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [items])
 
   const totalCount = items.reduce((sum, item) => sum + item.quantity, 0)
-  const totalPrice = items.reduce((sum, item) => sum + (item.price * item.quantity) + (item.deliveryFee || 0), 0)
-  const totalDeliveryFee = items.reduce((sum, item) => sum + (item.deliveryFee || 0), 0)
+  // totalPrice 只算商品小计，运费单独用 totalDeliveryFee 表示——把运费混进
+  // 「商品金额」里会让它和结算页的「商品金额」对不上。
+  const totalPrice = items.reduce((sum, item) => sum + item.price * item.quantity, 0)
+  // 整单运费取各商品运费的最高值，不逐件累加（与 calcOrderAmount 的入参口径一致）
+  const totalDeliveryFee = calcOrderDeliveryFee(items)
 
   const addItem = useCallback((item: Omit<CartItem, 'quantity'>) => {
     setItems(prev => {

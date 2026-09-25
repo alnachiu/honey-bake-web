@@ -45,6 +45,9 @@ export default function AdminMembershipPage() {
   const [memberStat, setMemberStat] = useState({ activeCount: 0, totalCount: 0 })
   const [orders, setOrders] = useState<any[]>([])
   const [dealId, setDealId] = useState('')
+  // 从「会员卡已付款」通知点进来时要定位到那一单
+  const [highlightId, setHighlightId] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   const toast = (text: string) => {
     setMessage(text)
@@ -52,6 +55,50 @@ export default function AdminMembershipPage() {
   }
 
   useEffect(() => { fetchAll() }, [])
+
+  // 读 ?orderId=：从「顾客已付款」通知点进来时直达那张卡。
+  // 刻意不用 useSearchParams：项目里没有 <Suspense> 边界，
+  // App Router 预渲染客户端页面时会报 missing-suspense-with-csr-bailout。
+  useEffect(() => {
+    const targetId = new URLSearchParams(window.location.search).get('orderId')
+    if (!targetId) return
+    setHighlightId(targetId)
+    setTab(TABS[2])   // 待确认收款列表在这个 tab
+  }, [])
+
+  useEffect(() => {
+    if (!highlightId || loading) return
+    const el = document.getElementById(`member-order-${highlightId}`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const timer = setTimeout(() => setHighlightId(''), 5000)   // 高亮过几秒淡出
+      return () => clearTimeout(timer)
+    }
+    // 不在「待确认收款」里，多半是点通知之前已经确认/作废过了，切到购买订单看结果
+    if (orders.some(o => o.id === highlightId)) {
+      setTab(TABS[3])
+      const timer = setTimeout(() => setHighlightId(''), 5000)
+      return () => clearTimeout(timer)
+    }
+  }, [highlightId, loading, orders, tab])
+
+  const exportMembershipOrders = async () => {
+    setExporting(true)
+    try {
+      const res = await fetch('/api/membership/orders/export')
+      if (!res.ok) { toast('导出失败，请稍后重试'); setExporting(false); return }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `membership_orders_${new Date().toISOString().slice(0, 10)}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      toast('导出失败，请稍后重试')
+    }
+    setExporting(false)
+  }
 
   const fetchAll = async () => {
     setLoading(true)
@@ -279,7 +326,11 @@ export default function AdminMembershipPage() {
     } catch (err) { alert('调整失败，请稍后重试') }
   }
 
-  const pendingOrders = orders.filter(o => o.status === 'pending')
+  // 待确认收款：顾客已经点过「我已付款」的排在最前面——那些才是真等着店主核对的，
+  // 自己下了单还没转账的排后面（见 payClaimedAt 的排序键）
+  const pendingOrders = orders
+    .filter(o => o.status === 'pending')
+    .sort((a, b) => Number(!!b.payClaimedAt) - Number(!!a.payClaimedAt))
   const paidCount = orders.filter(o => o.status === 'paid').length
   const paidAmount = orders.filter(o => o.status === 'paid').reduce((s, o) => s + (o.price || 0), 0)
 
@@ -505,7 +556,11 @@ export default function AdminMembershipPage() {
             <>
               <p className="text-sm font-bold text-text-primary">待确认收款（{pendingOrders.length}）</p>
               {pendingOrders.map(o => (
-                <div key={o.id} className="card">
+                <div
+                  key={o.id}
+                  id={`member-order-${o.id}`}
+                  className={`card transition-shadow ${highlightId === o.id ? 'ring-2 ring-primary-500 shadow-lg' : ''}`}
+                >
                   <div className="flex items-center gap-3">
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-text-primary">{o.user?.name || '未知用户'}</p>
@@ -522,15 +577,22 @@ export default function AdminMembershipPage() {
                       >
                         💰 确认收款
                       </button>
+                      {/* 「取消」说得含糊——店主要表达的是「没收到这笔钱」，
+                          作废这一单，而不是「我不想卖了」 */}
                       <button
                         onClick={() => dealOrder(o, 'cancel')}
                         disabled={dealId === o.id}
                         className="text-[10px] px-3 py-1.5 rounded-full border border-warm-200 text-text-secondary disabled:opacity-50"
                       >
-                        取消
+                        未收到款
                       </button>
                     </div>
                   </div>
+                  {o.payClaimedAt && (
+                    <p className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mt-2">
+                      💬 顾客已于 {formatDate(o.payClaimedAt)} 告知已付款，请核对到账后确认收款
+                    </p>
+                  )}
                 </div>
               ))}
             </>
@@ -582,12 +644,25 @@ export default function AdminMembershipPage() {
             </div>
           </div>
 
+          {/* 会员卡购买记录单独导一份，与订单导出分开（两个独立 CSV 按钮） */}
+          <button
+            onClick={exportMembershipOrders}
+            disabled={exporting || orders.length === 0}
+            className="w-full py-2 rounded-full bg-green-500 text-white text-xs disabled:opacity-50"
+          >
+            {exporting ? '导出中...' : '📥 导出会员卡购买记录 CSV'}
+          </button>
+
           {orders.length === 0 ? (
             <div className="text-center py-10"><p className="text-text-light text-sm">暂无购买记录</p></div>
           ) : orders.map(o => {
             const st = ORDER_STATUS[o.status] || { text: o.status, cls: 'text-text-light' }
             return (
-              <div key={o.id} className="card">
+              <div
+                key={o.id}
+                id={`member-order-${o.id}`}
+                className={`card transition-shadow ${highlightId === o.id ? 'ring-2 ring-primary-500 shadow-lg' : ''}`}
+              >
                 <div className="flex justify-between items-center mb-1">
                   <span className="text-xs text-text-light">#{o.orderNo?.slice(-8)}</span>
                   <span className={`text-xs font-medium ${st.cls}`}>{st.text}</span>
@@ -599,7 +674,10 @@ export default function AdminMembershipPage() {
                 <p className="text-xs text-text-light mt-1">{o.planName} · {o.days} 天</p>
                 <div className="flex justify-between items-center pt-2 mt-2 border-t border-warm-100">
                   <span className="text-[10px] text-text-light">
-                    {formatDate(o.createdAt)}{o.payTime ? ` · 收款 ${formatDate(o.payTime)}` : ''}
+                    {formatDate(o.createdAt)}
+                    {o.payTime
+                      ? ` · 收款 ${formatDate(o.payTime)}`
+                      : o.payClaimedAt ? ` · 顾客称已付款 ${formatDate(o.payClaimedAt)}` : ''}
                   </span>
                   <span className="font-semibold text-primary-500">¥{o.price.toFixed(2)}</span>
                 </div>

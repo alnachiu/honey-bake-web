@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
-import { generateOrderNo, calcOrderAmount, giftFromCoupon } from '@/lib/utils'
+import { generateOrderNo, calcOrderAmount, calcOrderDeliveryFee, giftFromCoupon, isMemberActive } from '@/lib/utils'
 import { resolveUserCoupons } from '@/lib/coupons'
 import { getMemberDiscountRate } from '@/lib/membership'
 
@@ -45,6 +45,12 @@ export async function POST(request: Request) {
     const user = await requireAuth()
     const data = await request.json()
 
+    // 管理员账号只用于管店和导单，不参与买卖——店主给自己下单会让
+    // 营业额、会员数据、订单列表全部失真。前端已隐藏入口，这里兜底挡住直连接口。
+    if (user.role === 'admin') {
+      return NextResponse.json({ error: '管理员账号不支持下单，请使用顾客账号购买' }, { status: 403 })
+    }
+
     if (!data.items || !data.items.length) {
       return NextResponse.json({ error: '订单不能为空' }, { status: 400 })
     }
@@ -63,6 +69,24 @@ export async function POST(request: Request) {
         unit: item.unit || '份'
       }
     })
+
+    // 运费只认库里的 Product.deliveryFee，不采信前端传来的值：
+    // 前端那份是加购时的快照，店主改过运费后就过时了，照它收费会让
+    // 用户看到的价格和实收不一致。顺带在这里把无效 productId 拦下——
+    // 否则会一路走到 order.create 才由外键抛错，报错信息对前端毫无意义。
+    const productIds = Array.from(
+      new Set<string>(
+        data.items.map((item: any) => String(item?.productId || '')).filter((sid: string) => sid !== '')
+      )
+    )
+    const products = await prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, deliveryFee: true }
+    })
+    if (products.length !== productIds.length) {
+      return NextResponse.json({ error: '订单中有商品已下架或不存在，请返回购物车重新结算' }, { status: 400 })
+    }
+    const deliveryFee = calcOrderDeliveryFee(products)
 
     // 校验并计算优惠券（归属 / 有效期 / 叠加规则 / 买赠券的硬规则）。
     // 传的是 UserCoupon.id（用户券包中那一张），不是券模板 id。
@@ -84,12 +108,16 @@ export async function POST(request: Request) {
 
     // 会员折扣率只在有效期内生效；非会员恒为 1（不打折）
     const memberDiscountRate = await getMemberDiscountRate(user.memberExpire)
+    // 身份单独存一份快照：折扣率被店主设成 1 时 memberDiscount 恒为 0，
+    // 光看金额分不出「非会员」和「会员但没打折」，导出对账时就会错。
+    const wasMember = isMemberActive(user.memberExpire)
 
-    // 金额统一由 calcOrderAmount 计算，与结算页共用同一套规则（先券后会员、运费按原价判断）
-    const { couponDiscount, memberDiscount, deliveryFee, totalAmount } = calcOrderAmount({
+    // 金额统一由 calcOrderAmount 计算，与结算页共用同一套规则（先券后会员，再加整单运费）
+    const { couponDiscount, memberDiscount, totalAmount } = calcOrderAmount({
       itemsAmount,
       coupons: resolved.coupons,
-      memberDiscountRate
+      memberDiscountRate,
+      deliveryFee
     })
 
     // 核销优惠券与创建订单放在同一事务：下单失败时券自动回滚，不会被白白烧掉
@@ -136,6 +164,7 @@ export async function POST(request: Request) {
           giftQuantity: gift?.giftQuantity || 0,
           remark: data.remark || '',
           addressId,
+          wasMember,
           status: 'pending'
         },
         include: { items: true }

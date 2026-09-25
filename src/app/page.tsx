@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import ProductCard from '@/components/ProductCard'
 import { useAuth } from '@/contexts/AuthContext'
-
-const DEFAULT_CATEGORIES = ['全部', '曲奇', '糖果', '零食', '礼盒']
+// 兜底分类与商品表单共用同一份定义，避免两处各写一份、改一处漏一处
+import { DEFAULT_CATEGORIES } from '@/hooks/useCategories'
 
 export default function HomePage() {
   const [products, setProducts] = useState<any[]>([])

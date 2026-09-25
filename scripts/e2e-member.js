@@ -217,7 +217,7 @@ async function main() {
     ok('商品金额 200', o.itemsAmount === 200, `itemsAmount=${o.itemsAmount}`)
     ok('优惠券 -20', o.couponDiscount === 20, `couponDiscount=${o.couponDiscount}`)
     ok('会员折扣 9.00（200-20=180 的 5%）', Math.abs(o.memberDiscount - 9) < 0.01, `memberDiscount=${o.memberDiscount}`)
-    ok('实付 171.00（180-9，满68免运费）', Math.abs(o.totalAmount - 171) < 0.01, `totalAmount=${o.totalAmount}`)
+    ok('实付 171.00（180-9，seed 商品运费全为 0 → 整单免运费）', Math.abs(o.totalAmount - 171) < 0.01, `totalAmount=${o.totalAmount}`)
   }
 
   const burned = await prisma.userCoupon.findUnique({ where: { id: ucFixed.id } })

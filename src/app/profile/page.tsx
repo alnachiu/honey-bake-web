@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { isMemberActive, isValidPhone } from '@/lib/utils'
 
 export default function ProfilePage() {
-  const { user, logout, refreshUser } = useAuth()
+  const { user, loading: authLoading, logout, refreshUser } = useAuth()
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [avatarUrl, setAvatarUrl] = useState('')
@@ -23,7 +23,12 @@ export default function ProfilePage() {
   const [phoneError, setPhoneError] = useState('')
   const [phoneSaving, setPhoneSaving] = useState(false)
 
-  useEffect(() => { if (!user) router.push('/login') }, [user])
+  // 必须带 authLoading 依赖并先返回：刷新时 user 从 null 起步，
+  // 不等认证恢复就判会把已登录用户直接推去登录页（刷新即掉登录的根因）
+  useEffect(() => {
+    if (authLoading) return
+    if (!user) router.push('/login')
+  }, [user, authLoading])
 
   useEffect(() => {
     if (user) setAvatarUrl(user.avatar || '')
@@ -140,6 +145,14 @@ export default function ProfilePage() {
     setPhoneSaving(false)
   }
 
+  if (authLoading) {
+    return (
+      <div className="page-container pt-4 space-y-3">
+        <div className="h-40 skeleton rounded-2xl" />
+        <div className="h-32 skeleton rounded-2xl" />
+      </div>
+    )
+  }
   if (!user) return null
 
   const showAvatar = avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(user.name || 'user')}&backgroundColor=fff0e8`

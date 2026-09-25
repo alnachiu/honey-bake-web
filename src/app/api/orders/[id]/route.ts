@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
+import { getOrderStatusText } from '@/lib/utils'
 
 export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
@@ -71,7 +72,29 @@ export async function PUT(request: Request, { params }: { params: { id: string }
     if (status === 'completed') updateData.completeTime = new Date()
     if (status === 'cancelled') updateData.cancelTime = new Date()
 
-    await prisma.order.update({ where: { id: params.id }, data: updateData })
+    // 「店主替别人改了状态」而不是用户操作自己的单：以订单归属判断，而不是只看角色
+    // （店主给自己下单后自己操作，不该收到自己的通知）。
+    // statusChanged 用来避免店主连点同一个按钮时刷出一串重复通知。
+    const isAdminActing = user.role === 'admin' && order.userId !== user.id
+    const statusChanged = order.status !== status
+
+    await prisma.$transaction(async tx => {
+      await tx.order.update({ where: { id: params.id }, data: updateData })
+
+      if (isAdminActing && statusChanged) {
+        // 消费者端此前对状态变更完全无感，只能自己反复刷页面；这条通知
+        // 让消息中心有记录，点进去直达订单详情看最新状态。
+        await tx.notification.create({
+          data: {
+            userId: order.userId,
+            title: '订单状态更新',
+            content: `订单 #${order.orderNo.slice(-8)}：${getOrderStatusText(order.status)} → ${getOrderStatusText(status)}`,
+            type: 'order',
+            link: `/orders/${order.id}`
+          }
+        })
+      }
+    })
 
     return NextResponse.json({ success: true })
   } catch (error: any) {

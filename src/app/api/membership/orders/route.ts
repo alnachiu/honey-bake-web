@@ -51,6 +51,11 @@ export async function POST(request: Request) {
   try {
     const user = await requireAuth()
 
+    // 与商品下单同理：店主不买自己的会员卡，否则会员数据会混进一个不该有的样本
+    if (user.role === 'admin') {
+      return NextResponse.json({ error: '管理员账号不支持购买会员卡，请使用顾客账号' }, { status: 403 })
+    }
+
     // 会员卡以手机号为凭证：没有手机号的卡在结算时无法被识别，等于白买。
     // 前端 /member 会先弹绑定框，这里再兜一层，挡住直接打接口的情况。
     if (!isValidPhone(user.phone)) {

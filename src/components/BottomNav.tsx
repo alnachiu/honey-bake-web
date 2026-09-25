@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useCart } from './CartProvider'
+import { useAuth } from '@/contexts/AuthContext'
 
 const TABS = [
   { href: '/', label: '主页', icon: '🏠', activeIcon: '🏠' },
@@ -13,6 +14,10 @@ const TABS = [
 export default function BottomNav() {
   const pathname = usePathname()
   const { totalCount } = useCart()
+  const { user } = useAuth()
+
+  // 管理员只做管理与导单，不放下单入口（购物车页服务端也会 403）
+  const tabs = user?.role === 'admin' ? TABS.filter(t => t.href !== '/cart') : TABS
 
   // 不在管理后台、登录/注册、结算、商品详情、订单详情页显示
   if (pathname?.startsWith('/admin') || pathname === '/login' || pathname === '/register' ||
@@ -23,7 +28,7 @@ export default function BottomNav() {
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-warm-200 z-50 pb-[env(safe-area-inset-bottom,0)]">
       <div className="max-w-lg mx-auto flex items-center justify-around h-14">
-        {TABS.map(tab => {
+        {tabs.map(tab => {
           const isActive = pathname === tab.href || (tab.href !== '/' && pathname?.startsWith(tab.href))
           return (
             <Link

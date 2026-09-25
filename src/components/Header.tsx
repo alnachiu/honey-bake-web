@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { isMemberActive } from '@/lib/utils'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 
 export default function Header() {
   const { user, logout } = useAuth()
@@ -14,6 +15,8 @@ export default function Header() {
   const router = useRouter()
 
   const isMember = isMemberActive(user?.memberExpire)
+  // 管理员只管理网站与导单，不显示购物车入口
+  const isAdmin = user?.role === 'admin'
 
   useEffect(() => {
     fetch('/api/settings').then(res => res.json()).then(data => {
@@ -22,13 +25,19 @@ export default function Header() {
   }, [])
 
   // 未登录时接口返回 401，静默忽略即可
-  useEffect(() => {
+  const fetchUnread = () => {
     if (!user) { setUnreadCount(0); return }
     fetch('/api/notifications?limit=1')
       .then(res => (res.ok ? res.json() : null))
       .then(data => { if (data) setUnreadCount(data.unreadCount || 0) })
       .catch(() => {})
-  }, [user])
+  }
+
+  useEffect(() => { fetchUnread() }, [user])
+
+  // 之前只在 user 变化时取一次，于是「店主在后台确认收款 / 收到新订单」这类
+  // 角标要等用户手动刷新页面才出现。改成 30 秒轮询 + 切回前台立刻补一次。
+  useAutoRefresh(fetchUnread, 30000, !!user)
 
   return (
     <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-warm-200">
@@ -39,9 +48,11 @@ export default function Header() {
         </Link>
 
         <div className="flex items-center gap-3">
-          <Link href="/cart" className="text-xl relative">
-            🛒
-          </Link>
+          {!isAdmin && (
+            <Link href="/cart" className="text-xl relative">
+              🛒
+            </Link>
+          )}
           {/* 会员卡入口不走购物车，直接进购买页 */}
           <Link href="/member" className="text-xl relative">
             💎
