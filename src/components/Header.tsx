@@ -60,11 +60,31 @@ export default function Header() {
               <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 text-[8px] leading-none text-primary-500 font-medium whitespace-nowrap">会员</span>
             )}
           </Link>
+          {/* 店主的顶栏铃铛：未读数直接挂在上头，点进消息中心。
+              消费者的铃铛在头像下拉菜单里（见下面那条），不占顶栏位置。 */}
+          {isAdmin && (
+            <Link href="/messages" className="text-xl relative">
+              🔔
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-2 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-medium rounded-full flex items-center justify-center px-1">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </Link>
+          )}
           {user ? (
             <div className="relative">
               <button onClick={() => setShowMenu(!showMenu)} className="w-8 h-8 rounded-full overflow-hidden border-2 border-primary-200">
                 <img src={user.avatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(user.name || 'user')}&backgroundColor=fff0e8`} alt={user.name} className="w-full h-full object-cover" />
               </button>
+              {/* 消费者没有顶栏铃铛，未读数挪到头像角上：店主改完订单状态，
+                  顾客不点开菜单也能看到「有新消息」。放在按钮外面是因为按钮是
+                  overflow-hidden 的（圆形裁切），角标放里面会被切掉。 */}
+              {!isAdmin && unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 z-20 min-w-[16px] h-[16px] bg-red-500 text-white text-[10px] font-medium rounded-full flex items-center justify-center px-1 pointer-events-none">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
               {showMenu && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />

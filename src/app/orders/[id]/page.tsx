@@ -6,11 +6,15 @@ import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { formatDate, getOrderStatusText } from '@/lib/utils'
+import OrderStatusActions from '@/components/OrderStatusActions'
 
 const STATUS_COLORS: Record<string, string> = { pending: '#E6A23C', paid: '#67C23A', making: '#409EFF', delivering: '#E8806A', completed: '#909399', cancelled: '#C0C4CC' }
 const STATUS_ICONS: Record<string, string> = { pending: '⏳', paid: '👩‍🍳', making: '👨‍🍳', delivering: '🚚', completed: '✅', cancelled: '❌' }
 
 const STATUS_DESC: Record<string, string> = { pending: '请扫码付款后点下方「已扫码支付」', paid: '店主正在精心准备您的订单', making: '正在制作中，请耐心等待', delivering: '您的订单正在配送中', completed: '感谢您的购买~', cancelled: '订单已取消' }
+
+// 店主在这几种状态下有可做的动作（与 OrderStatusActions 支持的状态保持一致）
+const ADMIN_ACTION_STATUSES = ['pending', 'paid', 'making', 'delivering']
 
 export default function OrderDetailPage() {
   const { id } = useParams()
@@ -21,6 +25,10 @@ export default function OrderDetailPage() {
   const [paymentQR, setPaymentQR] = useState('')
   const [payNotifying, setPayNotifying] = useState(false)
   const [toast, setToast] = useState('')
+
+  // 店主看的是别人的单：付款码、「已扫码支付」、取消/确认收货这些消费者动作
+  // 对他都不成立（「已扫码支付」还会被服务端按归属 403），整体换成管理操作。
+  const isAdmin = user?.role === 'admin'
 
   useEffect(() => {
     // 等认证恢复完再判，否则刷新时 user 还是 null，会被误踢去登录页
@@ -97,14 +105,17 @@ export default function OrderDetailPage() {
             <span className="text-3xl">{statusIcon}</span>
             <div>
               <p className="font-semibold text-lg">{getOrderStatusText(order.status)}</p>
-              <p className="text-sm opacity-90 mt-0.5">{STATUS_DESC[order.status]}</p>
+              {/* 那句「请扫码付款后点已扫码支付」是给消费者的，店主看到只会困惑 */}
+              <p className="text-sm opacity-90 mt-0.5">
+                {isAdmin ? `订单 #${order.orderNo?.slice(-8)}` : STATUS_DESC[order.status]}
+              </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Payment QR Code */}
-      {order.status === 'pending' && paymentQR && (
+      {/* Payment QR Code（消费者专用：店主不替顾客扫码付款） */}
+      {!isAdmin && order.status === 'pending' && paymentQR && (
         <div className="px-4 mt-3">
           <div className="card flex flex-col items-center py-5">
             <p className="text-sm font-medium text-text-primary mb-1">💳 微信扫码付款</p>
@@ -162,6 +173,13 @@ export default function OrderDetailPage() {
               <p className="text-xs text-text-secondary">{order.address.region} {order.address.detail}</p>
             </div>
           )}
+          {/* 付款码那块对店主是隐藏的，所以「顾客说付了」这条必须在这里露出，
+              否则店主判断不了该不该点确认收款 */}
+          {isAdmin && order.payClaimedAt && (
+            <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-1">
+              顾客已于 {formatDate(order.payClaimedAt)} 告知已付款
+            </p>
+          )}
           <div className="flex justify-between text-xs"><span className="text-text-light">订单编号</span><span className="text-text-primary">{order.orderNo}</span></div>
           <div className="flex justify-between text-xs"><span className="text-text-light">下单时间</span><span className="text-text-primary">{formatDate(order.createdAt)}</span></div>
           {order.payTime && <div className="flex justify-between text-xs"><span className="text-text-light">付款时间</span><span className="text-text-primary">{formatDate(order.payTime)}</span></div>}
@@ -183,31 +201,42 @@ export default function OrderDetailPage() {
       </div>
 
       {/* Actions */}
+      {(!isAdmin || ADMIN_ACTION_STATUSES.includes(order.status)) && (
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-warm-200 px-4 py-3">
         <div className="max-w-lg mx-auto flex gap-3">
-          {order.status === 'pending' && (
+          {isAdmin ? (
+            // 店主的操作集：确认收款 / 发货 / 完成配送，与订单管理列表里的是同一个组件。
+            // 已完成/已取消的单没有可做动作，那时整条底栏都不渲染——否则页脚挂一条
+            // 空白栏，看着像加载失败。
+            <OrderStatusActions order={order} onDone={() => fetchOrder(true)} size="full" />
+          ) : (
             <>
-              <button onClick={() => updateStatus('cancelled')} className="flex-1 py-2.5 rounded-full border border-warm-300 text-sm text-text-secondary">取消订单</button>
-              {order.payClaimedAt ? (
-                // 已经声明过付款就置灰：重复点只会重复通知店主，没有意义
-                <button disabled className="flex-1 py-2.5 rounded-full bg-warm-200 text-text-light text-sm">
-                  已扫码支付 ¥{order.totalAmount.toFixed(2)}
-                </button>
-              ) : (
-                <button onClick={claimPaid} disabled={payNotifying} className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm disabled:opacity-60">
-                  {payNotifying ? '通知中...' : `已扫码支付 ¥${order.totalAmount.toFixed(2)}`}
-                </button>
+              {order.status === 'pending' && (
+                <>
+                  <button onClick={() => updateStatus('cancelled')} className="flex-1 py-2.5 rounded-full border border-warm-300 text-sm text-text-secondary">取消订单</button>
+                  {order.payClaimedAt ? (
+                    // 已经声明过付款就置灰：重复点只会重复通知店主，没有意义
+                    <button disabled className="flex-1 py-2.5 rounded-full bg-warm-200 text-text-light text-sm">
+                      已扫码支付 ¥{order.totalAmount.toFixed(2)}
+                    </button>
+                  ) : (
+                    <button onClick={claimPaid} disabled={payNotifying} className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm disabled:opacity-60">
+                      {payNotifying ? '通知中...' : `已扫码支付 ¥${order.totalAmount.toFixed(2)}`}
+                    </button>
+                  )}
+                </>
+              )}
+              {order.status === 'delivering' && (
+                <button onClick={() => updateStatus('completed')} className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm">确认收货</button>
+              )}
+              {order.status === 'completed' && (
+                <Link href="/" className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm text-center">再来一单</Link>
               )}
             </>
           )}
-          {order.status === 'delivering' && (
-            <button onClick={() => updateStatus('completed')} className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm">确认收货</button>
-          )}
-          {order.status === 'completed' && (
-            <Link href="/" className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm text-center">再来一单</Link>
-          )}
         </div>
       </div>
+      )}
     </div>
   )
 }

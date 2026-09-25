@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
-import { generateOrderNo, calcOrderAmount, calcOrderDeliveryFee, giftFromCoupon, isMemberActive } from '@/lib/utils'
+import { generateOrderNo, calcOrderAmount, calcOrderDeliveryFee, giftFromCoupon, isMemberActive, resolveOrderDateRange } from '@/lib/utils'
 import { resolveUserCoupons } from '@/lib/coupons'
 import { getMemberDiscountRate } from '@/lib/membership'
 
@@ -10,8 +10,12 @@ export async function GET(request: Request) {
     const user = await requireAuth()
     const { searchParams } = new URL(request.url)
     const status = searchParams.get('status')
-    const page = parseInt(searchParams.get('page') || '1')
-    const pageSize = parseInt(searchParams.get('pageSize') || '20')
+    // parseInt('abc') 是 NaN，直接喂给 skip/take 会让 Prisma 抛错变成 500。
+    // 分页参数是外部可控的，越界值一律夹回合法范围而不是报错。
+    const pageRaw = parseInt(searchParams.get('page') || '1')
+    const sizeRaw = parseInt(searchParams.get('pageSize') || '20')
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1
+    const pageSize = Number.isFinite(sizeRaw) && sizeRaw > 0 ? Math.min(sizeRaw, 200) : 20
 
     // Auto-complete orders in 'delivering' status older than 7 days
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
@@ -23,18 +27,36 @@ export async function GET(request: Request) {
       data: { status: 'completed', completeTime: new Date() }
     })
 
-    const where: any = user.role === 'admin' ? {} : { userId: user.id }
+    const isAdmin = user.role === 'admin'
+    const where: any = isAdmin ? {} : { userId: user.id }
     if (status) where.status = status
 
-    const orders = await prisma.order.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      include: { items: true, address: true }
-    })
+    // 日期筛选只对店主开放：消费者端没有时间筛选控件，多认一个参数就等于多开一个
+    // 查询维度，没有必要。店主传空值/脏值时 resolveOrderDateRange 返回 null，不加条件。
+    if (isAdmin) {
+      const range = resolveOrderDateRange(searchParams.get('startDate'), searchParams.get('endDate'))
+      if (range) where.createdAt = range
+    }
 
-    return NextResponse.json({ orders })
+    // 订单管理列表要一眼看出是谁下的单：地址上的收件人取自 address，
+    // 账号本身（可能和收件人不是同一个人）只有管理员才需要看到。
+    // 消费者侧刻意不给 user：响应体保持改造前的形状，避免动到正在用的渲染。
+    const [orders, total] = await Promise.all([
+      prisma.order.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: isAdmin
+          ? { items: true, address: true, user: { select: { id: true, name: true, phone: true } } }
+          : { items: true, address: true }
+      }),
+      // 计数放在上面那段自动完成之后，否则「7 天前的配送中」这批刚被改掉的行
+      // 会按旧状态算进总数，列表和「共 N 单」对不上
+      prisma.order.count({ where })
+    ])
+
+    return NextResponse.json({ orders, total, page, pageSize })
   } catch (error: any) {
     return NextResponse.json({ error: error.message || '获取订单失败' }, { status: 500 })
   }

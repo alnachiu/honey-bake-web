@@ -107,6 +107,44 @@ export function parseLocalDateTime(value: string): Date | null {
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]))
 }
 
+/**
+ * 把后台订单筛选那两个日期框（YYYY-MM-DD）解析成本地时区的闭区间。
+ *
+ * **必须用 `new Date(y, m-1, d)` 构造**：`new Date('2026-09-01')` 走的是 UTC 零点，
+ * 在东八区相当于当天 08:00，会把当天早上下的单整个漏掉；end 取当天 23:59:59.999，
+ * 否则「今天」筛不出今天下午的单（这两个都是筛选功能最容易被投诉的 bug）。
+ *
+ * 格式不合法（或 2026-13-99 这种越界值）就忽略该端——筛选框里出现半截输入是常态，
+ * 不该让接口 400/500；两端都无效返回 null，由调用方决定「不加条件」。
+ * 起止填反了就直接交换：店主手抖时看到的是他想要的那段区间，而不是空列表。
+ */
+export function resolveOrderDateRange(
+  startDate?: string | null,
+  endDate?: string | null
+): { gte?: Date; lte?: Date } | null {
+  const parseDay = (value: string | null | undefined, endOfDay: boolean): Date | null => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((value || '').trim())
+    if (!m) return null
+    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3])
+    const date = endOfDay
+      ? new Date(y, mo - 1, d, 23, 59, 59, 999)
+      : new Date(y, mo - 1, d)
+    // 回读校验：Date 会把 13 月 99 日静默进位成别的日子，不进位的才是合法输入
+    if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null
+    return date
+  }
+
+  let gte = parseDay(startDate, false)
+  let lte = parseDay(endDate, true)
+  if (!gte && !lte) return null
+  if (gte && lte && gte.getTime() > lte.getTime()) {
+    const swap = gte
+    gte = new Date(lte.getFullYear(), lte.getMonth(), lte.getDate())
+    lte = new Date(swap.getFullYear(), swap.getMonth(), swap.getDate(), 23, 59, 59, 999)
+  }
+  return { ...(gte ? { gte } : {}), ...(lte ? { lte } : {}) }
+}
+
 /** 券卡片上的一行有效期说明 */
 export function couponExpireText(c: {
   validMode?: string

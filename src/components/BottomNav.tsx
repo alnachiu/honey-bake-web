@@ -11,13 +11,20 @@ const TABS = [
   { href: '/profile', label: '我的', icon: '👤', activeIcon: '👤' },
 ]
 
+// 管理员不放下单入口（购物车页服务端也会 403），那一格换成订单管理，
+// 店主在手机上随时能看单、改状态，不用绕进后台的桌面版页面。
+const ADMIN_TABS = [
+  { href: '/', label: '主页', icon: '🏠', activeIcon: '🏠' },
+  { href: '/orders', label: '订单管理', icon: '📋', activeIcon: '📋' },
+  { href: '/profile', label: '我的', icon: '👤', activeIcon: '👤' },
+]
+
 export default function BottomNav() {
   const pathname = usePathname()
   const { totalCount } = useCart()
   const { user } = useAuth()
 
-  // 管理员只做管理与导单，不放下单入口（购物车页服务端也会 403）
-  const tabs = user?.role === 'admin' ? TABS.filter(t => t.href !== '/cart') : TABS
+  const tabs = user?.role === 'admin' ? ADMIN_TABS : TABS
 
   // 不在管理后台、登录/注册、结算、商品详情、订单详情页显示
   if (pathname?.startsWith('/admin') || pathname === '/login' || pathname === '/register' ||
