@@ -219,10 +219,12 @@ export default function AdminOrdersPage() {
               <p className="text-xs text-text-light mb-1">{new Date(order.createdAt).toLocaleString('zh-CN')}</p>
               {receiverLine(order) && <p className="text-xs text-text-light mb-2">📍 {receiverLine(order)}</p>}
               {order.trackingNo && <p className="text-xs text-blue-500 mb-2">📦 物流单号：{order.trackingNo}</p>}
-              {/* 顾客点过「已扫码支付」：提醒店主核对到账，这就是后台要处理的待办 */}
-              {order.status === 'pending' && order.payClaimedAt && (
+              {/* 顾客点过「已扫码支付」：提醒店主核对到账，这就是后台要处理的待办。
+                  不卡 status —— 顾客一点，订单就直接进 paid 了，卡状态这条提醒会当场消失。
+                  下单时店主自己就是顾客的订单没有 payClaimedAt，不会误报。 */}
+              {order.payClaimedAt && (
                 <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 mb-2">
-                  💬 顾客已于 {new Date(order.payClaimedAt).toLocaleString('zh-CN')} 告知已付款，请核对到账后确认收款
+                  💬 顾客已于 {new Date(order.payClaimedAt).toLocaleString('zh-CN')} 告知已付款，请核对到账后发货
                 </p>
               )}
 

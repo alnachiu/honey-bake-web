@@ -179,7 +179,12 @@ async function main() {
   const payNotice = findNotice(adminNotices.data.notifications, '已扫码支付')
   ok('店主收到付款通知', !!payNotice, JSON.stringify(adminNotices.data.notifications?.map(n => n.title)))
   ok('通知跳转到该订单', payNotice?.link === `/admin/orders?orderId=${orderId}`, `link=${payNotice?.link}`)
-  ok('订单记下 payClaimedAt', !!(await prisma.order.findUnique({ where: { id: orderId } })).payClaimedAt)
+  // 点一下「已扫码支付」= 订单直接进 paid（后台「待处理订单」统计的就是这一档），
+  // 店主不再需要单独点一次「确认收款」
+  const claimedOrder = await prisma.order.findUnique({ where: { id: orderId } })
+  ok('订单记下 payClaimedAt', !!claimedOrder.payClaimedAt)
+  ok('订单直接推进到 paid（待处理）', claimedOrder.status === 'paid', `status=${claimedOrder.status}`)
+  ok('付款时间同时写下', !!claimedOrder.payTime, `payTime=${claimedOrder.payTime}`)
 
   const notifyAgain = await user.client.req(`/api/orders/${orderId}/pay-notify`, { method: 'POST' })
   ok('重复点击不重复发通知', notifyAgain.ok && notifyAgain.data.alreadyNotified === true, JSON.stringify(notifyAgain.data))
@@ -194,22 +199,23 @@ async function main() {
   const userNoticesBefore = await user.client.req('/api/notifications')
   const beforeCount = (userNoticesBefore.data.notifications || []).length
 
-  const confirm = await admin.req(`/api/orders/${orderId}`, {
+  // 顾客声明付款时订单已经自己进了 paid，所以店主的下一步是发货
+  const ship = await admin.req(`/api/orders/${orderId}`, {
     method: 'PUT',
-    body: JSON.stringify({ status: 'paid' })
+    body: JSON.stringify({ status: 'delivering' })
   })
-  ok('店主确认收款成功', confirm.ok, JSON.stringify(confirm.data))
+  ok('店主发货成功', ship.ok, JSON.stringify(ship.data))
 
   const userNotices = await user.client.req('/api/notifications')
   const list = userNotices.data.notifications || []
   ok('消费者收到新的状态通知', list.length > beforeCount, `${beforeCount} → ${list.length}`)
   const statusNotice = findNotice(list, '订单状态更新')
-  ok('通知写明 待付款 → 待制作', !!statusNotice?.content?.includes('待付款') && statusNotice.content.includes('待制作'), `content=${statusNotice?.content}`)
+  ok('通知写明 待制作 → 配送中', !!statusNotice?.content?.includes('待制作') && statusNotice.content.includes('配送中'), `content=${statusNotice?.content}`)
   ok('通知跳转到订单详情', statusNotice?.link === `/orders/${orderId}`, `link=${statusNotice?.link}`)
 
   // 店主重复点同一个状态不刷屏
   const beforeDup = (await user.client.req('/api/notifications')).data.notifications.length
-  await admin.req(`/api/orders/${orderId}`, { method: 'PUT', body: JSON.stringify({ status: 'paid' }) })
+  await admin.req(`/api/orders/${orderId}`, { method: 'PUT', body: JSON.stringify({ status: 'delivering' }) })
   const afterDup = (await user.client.req('/api/notifications')).data.notifications.length
   ok('状态没变则不重复通知', afterDup === beforeDup, `${beforeDup} → ${afterDup}`)
 

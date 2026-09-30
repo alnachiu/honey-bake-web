@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
@@ -46,9 +46,17 @@ export default function OrdersPage() {
   // 店主改状态后这里要自己变，不用用户手动下拉刷新
   useAutoRefresh(() => fetchOrders(true), 15000, !!user)
 
+  /**
+   * 每次拉列表都领一个自增号，只有最近一次的响应允许写进 state。
+   * 15 秒轮询和「刚取消/确认收货完」的立即刷新会并发，先发的可能后回，
+   * 把旧数据盖上去——表现为卡片底部的按钮来回跳。
+   */
+  const fetchSeq = useRef(0)
+
   const fetchOrders = async (silent = false) => {
     // 轮询走 silent：不能每次 setLoading(true)，否则列表每 15 秒闪一遍骨架屏
     if (!silent) setLoading(true)
+    const seq = ++fetchSeq.current
     try {
       const params = new URLSearchParams()
       const status = STATUS_MAP[tab]
@@ -67,10 +75,11 @@ export default function OrdersPage() {
 
       const res = await fetch(`/api/orders?${params}`)
       const data = await res.json()
+      if (seq !== fetchSeq.current) return
       setOrders(data.orders || [])
       setTotal(typeof data.total === 'number' ? data.total : (data.orders || []).length)
     } catch (err) { console.error(err) }
-    if (!silent) setLoading(false)
+    if (!silent && seq === fetchSeq.current) setLoading(false)
   }
 
   // 换筛选条件必须回到第 1 页，否则「在第 3 页切到待付款」会请求一个空页
@@ -139,9 +148,11 @@ export default function OrdersPage() {
             </p>
           )}
 
-          {order.payClaimedAt && order.status === 'pending' && (
+          {/* 不再要求 status === 'pending'：顾客点完「已扫码支付」订单就直接进 paid 了，
+              卡状态的话这条提醒会当场消失——而它正是店主核对到账的唯一线索 */}
+          {order.payClaimedAt && (
             <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1 mb-2">
-              顾客称已付款，待你确认收款
+              💬 顾客称已付款 {new Date(order.payClaimedAt).toLocaleString('zh-CN')}，请核对到账
             </p>
           )}
 
@@ -290,6 +301,16 @@ export default function OrdersPage() {
               {order.status === 'pending' && order.payClaimedAt && (
                 // 外层整张卡是 <Link>，这里不能嵌套 <Link>（非法 HTML，点下去行为也不定），
                 // 所以用 preventDefault + router.push 走同一套跳转
+                <button
+                  onClick={(e) => { e.preventDefault(); router.push(`/chat?orderNo=${order.orderNo}`) }}
+                  className="w-full mt-3 py-2 rounded-full border border-primary-300 text-primary-500 text-xs"
+                >
+                  💬 联系小二
+                </button>
+              )}
+              {/* 待处理 / 制作中：顾客点完「已扫码支付」后订单就在这两档，
+                  详情页那边也只有「联系小二」一个按钮，列表这里保持一致 */}
+              {(order.status === 'paid' || order.status === 'making') && (
                 <button
                   onClick={(e) => { e.preventDefault(); router.push(`/chat?orderNo=${order.orderNo}`) }}
                   className="w-full mt-3 py-2 rounded-full border border-primary-300 text-primary-500 text-xs"

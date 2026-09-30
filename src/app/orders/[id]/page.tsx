@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
@@ -45,19 +45,36 @@ export default function OrderDetailPage() {
   // 店主在后台改了状态，这里 10 秒内自己跟上，不用用户手动刷新
   useAutoRefresh(() => fetchOrder(true), 10000, !authLoading && !!user)
 
+  /**
+   * 每次拉订单都领一个自增号，只有**最近一次**的响应允许写进 state。
+   *
+   * 这里有两个刷新源会并发：10 秒轮询，和「刚点完已扫码支付」的那次立即刷新。
+   * 先发出去的请求可能后回来——而它的响应是在付款声明落库**之前**生成的，
+   * 里面 payClaimedAt 还是 null。不挡的话它会把底部栏从「联系小二」顶回
+   * 「取消订单」，等下一轮询回来又变回「联系小二」，看起来就是来回乱跳。
+   */
+  const fetchSeq = useRef(0)
+
   const fetchOrder = async (silent = false) => {
+    const seq = ++fetchSeq.current
     try {
       const [orderRes, settingsRes] = await Promise.all([
         fetch(`/api/orders/${id}`),
-        fetch('/api/settings')
+        fetch('/api/settings').catch(() => null)
       ])
       const orderData = await orderRes.json()
-      const settingsData = await settingsRes.json()
-      setOrder(orderData.order)
-      if (settingsData.settings?.paymentQR) setPaymentQR(settingsData.settings.paymentQR)
+      if (seq === fetchSeq.current) setOrder(orderData.order)
+      // 付款码跟订单状态无关，单独吞掉它自己的异常：
+      // 设置接口偶尔抽风不该连带把订单状态也卡住不更新
+      if (settingsRes) {
+        try {
+          const settingsData = await settingsRes.json()
+          if (settingsData.settings?.paymentQR) setPaymentQR(settingsData.settings.paymentQR)
+        } catch { /* 付款码拉不到就先不显示 */ }
+      }
     } catch (err) { console.error(err) }
     // 轮询时不要动 loading：否则每 10 秒整页闪一次骨架屏
-    if (!silent) setLoading(false)
+    if (!silent && seq === fetchSeq.current) setLoading(false)
   }
 
   const updateStatus = async (status: string) => {
@@ -80,7 +97,12 @@ export default function OrderDetailPage() {
         setToast(data.error || '通知店主失败，请重试')
       } else {
         setToast(data.alreadyNotified ? '已通知过店主了，请耐心等待' : '✅ 已通知店主，等待确认收款')
-        fetchOrder(true)   // 立刻把 payClaimedAt 反映到按钮状态上
+        // 先把「已声明付款」就地写进 state：底部栏当场换成「联系小二」，
+        // 不用干等一个来回。随后那次 fetchOrder 会领新号，把此刻还在飞的旧响应
+        // 全部作废——否则旧响应回来会把界面顶回「取消订单」。
+        // 用 `旧值 || 新时间` 只是为了不把服务端已有的时间戳覆盖掉，语义上它只增不减。
+        setOrder((prev: any) => (prev ? { ...prev, payClaimedAt: prev.payClaimedAt || new Date().toISOString() } : prev))
+        fetchOrder(true)
       }
     } catch (err) {
       setToast('网络异常，请重试')
@@ -99,9 +121,14 @@ export default function OrderDetailPage() {
   const canChat = order.status !== 'cancelled' && (order.status !== 'pending' || !!order.payClaimedAt)
   // 底栏该不该出现。以前只判了「店主且状态在可操作集里」，消费者那边是
   // 三个状态各写一个条件——已取消的单因此会挂出一条空白的底部栏，看着像加载失败。
+  //
+  // paid / making 必须在这里：顾客点完「已扫码支付」订单就变成 paid，
+  // 而那两档此前根本不出底栏，于是页面上一件事都做不了——
+  // 偏偏这时候顾客最需要找店主（钱转了、单还没动静）。这两档只可能渲染出
+  // 「联系小二」一个按钮。
   const showBar = isAdmin
     ? ADMIN_ACTION_STATUSES.includes(order.status)
-    : ['pending', 'delivering', 'completed'].includes(order.status)
+    : ['pending', 'paid', 'making', 'delivering', 'completed'].includes(order.status)
 
   return (
     <div className="pb-28">
