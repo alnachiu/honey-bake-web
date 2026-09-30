@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
-import { getOrderStatusText } from '@/lib/utils'
+import { getOrderStatusText, imgUrl, ORDER_TIME_RANGES as TIME_RANGES, orderRangeToDates as rangeToDates } from '@/lib/utils'
 import OrderStatusActions from '@/components/OrderStatusActions'
 
 // 消费者只关心自己这几档；店主需要完整状态机（含制作中、已取消）
@@ -18,28 +18,6 @@ const STATUS_MAP: Record<string, string> = {
 
 const PAGE_SIZE = 20
 const MAX_PAGE_SIZE = 200
-
-const TIME_RANGES = [
-  { key: 'all', label: '全部' },
-  { key: 'today', label: '今天' },
-  { key: '7', label: '近7天' },
-  { key: '30', label: '近30天' }
-]
-
-const pad2 = (n: number) => String(n).padStart(2, '0')
-const dayStr = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
-
-/** 把快捷档换算成接口要的起止日期（YYYY-MM-DD，含当天两端） */
-function rangeToDates(key: string): { startDate: string; endDate: string } {
-  if (key === 'all' || key === 'custom') return { startDate: '', endDate: '' }
-  const today = new Date()
-  const end = dayStr(today)
-  if (key === 'today') return { startDate: end, endDate: end }
-  const days = Number(key)
-  if (!Number.isFinite(days) || days <= 0) return { startDate: '', endDate: '' }
-  // 「近 7 天」= 含今天在内的 7 天，所以往前推 6 天
-  return { startDate: dayStr(new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1))), endDate: end }
-}
 
 export default function OrdersPage() {
   const { user, loading: authLoading } = useAuth()
@@ -170,7 +148,7 @@ export default function OrdersPage() {
           <div className="space-y-1.5">
             {order.items?.map((item: any, i: number) => (
               <div key={i} className="flex items-center gap-2">
-                <img src={item.image || '/placeholder.jpg'} className="w-8 h-8 rounded-lg bg-warm-100 object-cover" />
+                <img src={imgUrl(item.image, 128) || '/placeholder.jpg'} className="w-8 h-8 rounded-lg bg-warm-100 object-cover" />
                 <span className="text-sm text-text-primary flex-1 truncate">{item.name}</span>
                 <span className="text-xs text-text-light">x{item.quantity}</span>
                 <span className="text-sm text-text-primary">¥{(item.price * item.quantity).toFixed(2)}</span>
@@ -276,7 +254,7 @@ export default function OrdersPage() {
               <div className="space-y-1.5">
                 {order.items?.map((item: any, i: number) => (
                   <div key={i} className="flex items-center gap-2">
-                    <img src={item.image || '/placeholder.jpg'} className="w-8 h-8 rounded-lg bg-warm-100 object-cover" />
+                    <img src={imgUrl(item.image, 128) || '/placeholder.jpg'} className="w-8 h-8 rounded-lg bg-warm-100 object-cover" />
                     <span className="text-sm text-text-primary flex-1 truncate">{item.name}</span>
                     <span className="text-xs text-text-light">x{item.quantity}</span>
                     <span className="text-sm text-text-primary">¥{(item.price * item.quantity).toFixed(2)}</span>
@@ -296,7 +274,9 @@ export default function OrdersPage() {
                 <span className="text-xs text-text-light">{new Date(order.createdAt).toLocaleString('zh-CN')}</span>
                 <span className="text-sm font-semibold text-primary-500">¥{order.totalAmount.toFixed(2)}</span>
               </div>
-              {order.status === 'pending' && (
+              {/* 「取消」只在还没声明付款时给。声明过付款的单子已经转出去钱了，
+                  再让他一键取消，店主那边的收款确认就白做了（详见详情页同一处判断）。 */}
+              {order.status === 'pending' && !order.payClaimedAt && (
                 <div className="flex gap-2 mt-3">
                   <button onClick={(e) => { e.preventDefault(); cancelOrder(order.id) }} className="flex-1 py-2 rounded-full border border-warm-300 text-xs text-text-secondary">取消</button>
                   {/* 这里不再自行把订单置为 paid：收款与否由店主在后台确认，
@@ -306,6 +286,16 @@ export default function OrdersPage() {
                     去付款
                   </span>
                 </div>
+              )}
+              {order.status === 'pending' && order.payClaimedAt && (
+                // 外层整张卡是 <Link>，这里不能嵌套 <Link>（非法 HTML，点下去行为也不定），
+                // 所以用 preventDefault + router.push 走同一套跳转
+                <button
+                  onClick={(e) => { e.preventDefault(); router.push(`/chat?orderNo=${order.orderNo}`) }}
+                  className="w-full mt-3 py-2 rounded-full border border-primary-300 text-primary-500 text-xs"
+                >
+                  💬 联系小二
+                </button>
               )}
               {order.status === 'delivering' && (
                 <button onClick={(e) => { e.preventDefault(); confirmOrder(order.id) }} className="w-full mt-3 py-2 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-xs">确认收货</button>

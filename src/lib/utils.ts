@@ -51,6 +51,26 @@ export function parseImages(images: string): string[] {
   }
 }
 
+/**
+ * 给商品图拼上缩放宽度，让服务端按展示尺寸下发。
+ *
+ * 线上商品图是原样入库的相机原图（平均 2.4MB，最大 5MB），而列表卡片只显示
+ * 200px 左右——不缩放的话首页光首图就要下 30MB，这正是网站打开慢的主因。
+ * 四个档位与 /api/uploads/[name] 的路由白名单一一对应（见该文件的 ALLOWED_WIDTHS）：
+ *   128 订单/结算页小图标 · 240 购物车与后台列表 · 400 商品卡片 · 800 详情主图与 banner
+ *
+ * 只处理站内上传的图片：外链（会员头像的 dicebear）和 /placeholder.jpg 原样返回，
+ * 免得给不支持这个参数的地址平白加上查询串。
+ *
+ * 传 `undefined` 宽度返回原图，用于收款码这类**不能缩放**的图（缩小后可能扫不出来）。
+ */
+export function imgUrl(url: string | undefined | null, width?: number): string {
+  if (!url) return ''
+  if (!width) return url
+  if (!url.startsWith('/api/uploads/')) return url
+  return `${url}${url.includes('?') ? '&' : '?'}w=${width}`
+}
+
 export function parseTags(tags: string): string[] {
   try {
     return JSON.parse(tags)
@@ -143,6 +163,35 @@ export function resolveOrderDateRange(
     lte = new Date(swap.getFullYear(), swap.getMonth(), swap.getDate(), 23, 59, 59, 999)
   }
   return { ...(gte ? { gte } : {}), ...(lte ? { lte } : {}) }
+}
+
+/** 本地日期 YYYY-MM-DD，用于把「近 7 天」这类快捷档换算成接口要的起止日期 */
+const dayStr = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+
+/** 订单筛选的快捷时间档。店主端订单页与后台订单管理共用同一组，避免两处标签对不上 */
+export const ORDER_TIME_RANGES = [
+  { key: 'all', label: '全部' },
+  { key: 'today', label: '今天' },
+  { key: '7', label: '近7天' },
+  { key: '30', label: '近30天' }
+]
+
+/**
+ * 把快捷档换算成接口要的起止日期（YYYY-MM-DD，含当天两端）。
+ * 'all' 与 'custom'（自己填日期那两个框）都返回空串，表示不加日期条件。
+ *
+ * 起止由服务端的 resolveOrderDateRange 解析，这里只负责生成字符串——
+ * 真正的时区处理（必须用 new Date(y, m-1, d) 构造）在那边，一处就够了。
+ */
+export function orderRangeToDates(key: string): { startDate: string; endDate: string } {
+  if (key === 'all' || key === 'custom') return { startDate: '', endDate: '' }
+  const today = new Date()
+  const end = dayStr(today)
+  if (key === 'today') return { startDate: end, endDate: end }
+  const days = Number(key)
+  if (!Number.isFinite(days) || days <= 0) return { startDate: '', endDate: '' }
+  // 「近 7 天」= 含今天在内的 7 天，所以往前推 6 天
+  return { startDate: dayStr(new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1))), endDate: end }
 }
 
 /** 券卡片上的一行有效期说明 */

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
-import { formatDate, getOrderStatusText } from '@/lib/utils'
+import { formatDate, getOrderStatusText, imgUrl } from '@/lib/utils'
 import OrderStatusActions from '@/components/OrderStatusActions'
 
 const STATUS_COLORS: Record<string, string> = { pending: '#E6A23C', paid: '#67C23A', making: '#409EFF', delivering: '#E8806A', completed: '#909399', cancelled: '#C0C4CC' }
@@ -89,6 +89,14 @@ export default function OrderDetailPage() {
 
   const statusColor = STATUS_COLORS[order.status] || '#909399'
   const statusIcon = STATUS_ICONS[order.status] || '📋'
+  // 已付款（含刚声明付款、待店主确认）以及之后的每一档，底栏都留「联系小二」；
+  // 已取消的单没有可聊的，未声明付款的 pending 单则先让他付款/取消。
+  const canChat = order.status !== 'cancelled' && (order.status !== 'pending' || !!order.payClaimedAt)
+  // 底栏该不该出现。以前只判了「店主且状态在可操作集里」，消费者那边是
+  // 三个状态各写一个条件——已取消的单因此会挂出一条空白的底部栏，看着像加载失败。
+  const showBar = isAdmin
+    ? ADMIN_ACTION_STATUSES.includes(order.status)
+    : ['pending', 'delivering', 'completed'].includes(order.status)
 
   return (
     <div className="pb-28">
@@ -139,7 +147,7 @@ export default function OrderDetailPage() {
           <p className="text-sm font-medium mb-3">商品清单</p>
           {order.items?.map((item: any, i: number) => (
             <div key={i} className="flex items-center gap-3 mb-3 last:mb-0">
-              <img src={item.image || '/placeholder.jpg'} className="w-14 h-14 rounded-xl bg-warm-100 object-cover" />
+              <img src={imgUrl(item.image, 240) || '/placeholder.jpg'} className="w-14 h-14 rounded-xl bg-warm-100 object-cover" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-text-primary truncate">{item.name}</p>
                 <p className="text-xs text-text-light">¥{item.price} x {item.quantity}</p>
@@ -201,7 +209,7 @@ export default function OrderDetailPage() {
       </div>
 
       {/* Actions */}
-      {(!isAdmin || ADMIN_ACTION_STATUSES.includes(order.status)) && (
+      {showBar && (
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-warm-200 px-4 py-3">
         <div className="max-w-lg mx-auto flex gap-3">
           {isAdmin ? (
@@ -211,19 +219,17 @@ export default function OrderDetailPage() {
             <OrderStatusActions order={order} onDone={() => fetchOrder(true)} size="full" />
           ) : (
             <>
-              {order.status === 'pending' && (
+              {/* 「取消订单」只在**还没声明付款**时出现。
+                  此前判的是 status === 'pending'，而顾客点完「已扫码支付」之后订单
+                  仍然是 pending（要等店主确认收款才变 paid），于是取消按钮照旧挂着——
+                  等于允许顾客撤掉一笔已经转出去的钱，店主核对到账时会对不上。
+                  已声明的部分收回来只能靠双方沟通，所以换成「联系小二」。 */}
+              {order.status === 'pending' && !order.payClaimedAt && (
                 <>
                   <button onClick={() => updateStatus('cancelled')} className="flex-1 py-2.5 rounded-full border border-warm-300 text-sm text-text-secondary">取消订单</button>
-                  {order.payClaimedAt ? (
-                    // 已经声明过付款就置灰：重复点只会重复通知店主，没有意义
-                    <button disabled className="flex-1 py-2.5 rounded-full bg-warm-200 text-text-light text-sm">
-                      已扫码支付 ¥{order.totalAmount.toFixed(2)}
-                    </button>
-                  ) : (
-                    <button onClick={claimPaid} disabled={payNotifying} className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm disabled:opacity-60">
-                      {payNotifying ? '通知中...' : `已扫码支付 ¥${order.totalAmount.toFixed(2)}`}
-                    </button>
-                  )}
+                  <button onClick={claimPaid} disabled={payNotifying} className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm disabled:opacity-60">
+                    {payNotifying ? '通知中...' : `已扫码支付 ¥${order.totalAmount.toFixed(2)}`}
+                  </button>
                 </>
               )}
               {order.status === 'delivering' && (
@@ -231,6 +237,13 @@ export default function OrderDetailPage() {
               )}
               {order.status === 'completed' && (
                 <Link href="/" className="flex-1 py-2.5 rounded-full bg-gradient-to-r from-primary-500 to-primary-400 text-white text-sm text-center">再来一单</Link>
+              )}
+              {/* 已声明付款 / 已收款及之后：唯一能做的就是找小二。
+                  带上订单号，店主从通知点进来一眼知道在说哪一单。 */}
+              {canChat && (
+                <Link href={`/chat?orderNo=${order.orderNo}`} className="flex-1 py-2.5 rounded-full border border-primary-300 text-primary-500 text-sm text-center whitespace-nowrap">
+                  💬 联系小二
+                </Link>
               )}
             </>
           )}

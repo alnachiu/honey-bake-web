@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { ORDER_TIME_RANGES, orderRangeToDates } from '@/lib/utils'
 
 const TABS = ['全部', '待付款', '待制作', '配送中', '已完成']
 const STATUS_MAP: Record<string, string> = { '全部': '', '待付款': 'pending', '待制作': 'paid', '配送中': 'delivering', '已完成': 'completed' }
@@ -11,12 +12,17 @@ export default function AdminOrdersPage() {
   const [tab, setTab] = useState('全部')
   const [exporting, setExporting] = useState(false)
   const [trackingInput, setTrackingInput] = useState<{ id: string; show: boolean; value: string }>({ id: '', show: false, value: '' })
+  // 时间筛选与店主端订单页同一套（共用 lib/utils 的快捷档换算），
+  // 并且会一并带进导出请求——不筛的话导出永远是全量
+  const [timeKey, setTimeKey] = useState('all')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   // 从「顾客已付款」通知点进来时，要定位到那一单
   const [highlightId, setHighlightId] = useState('')
   const [focusNotice, setFocusNotice] = useState('')
   const fetchedTargetRef = useRef(false)
 
-  useEffect(() => { fetchOrders() }, [tab])
+  useEffect(() => { fetchOrders() }, [tab, timeKey, startDate, endDate])
 
   // 读 ?orderId=
   // 刻意不用 useSearchParams：这个项目没有任何页面用过它，也没有 <Suspense> 边界，
@@ -55,13 +61,21 @@ export default function AdminOrdersPage() {
     return () => { alive = false }
   }, [highlightId, loading, orders])
 
+  /** 当前筛选条件 → 查询参数。列表与导出共用，否则两边迟早对不上 */
+  const buildFilters = () => {
+    const params = new URLSearchParams()
+    const s = STATUS_MAP[tab]
+    if (s) params.set('status', s)
+    const dates = timeKey === 'custom' ? { startDate, endDate } : orderRangeToDates(timeKey)
+    if (dates.startDate) params.set('startDate', dates.startDate)
+    if (dates.endDate) params.set('endDate', dates.endDate)
+    return params
+  }
+
   const fetchOrders = async () => {
     setLoading(true)
     try {
-      const params = new URLSearchParams()
-      const s = STATUS_MAP[tab]
-      if (s) params.set('status', s)
-      const res = await fetch(`/api/orders?${params}`)
+      const res = await fetch(`/api/orders?${buildFilters()}`)
       const data = await res.json()
       setOrders(data.orders || [])
     } catch (err) { console.error(err) }
@@ -96,7 +110,14 @@ export default function AdminOrdersPage() {
   const exportOrders = async () => {
     setExporting(true)
     try {
-      const res = await fetch('/api/orders/export')
+      // 带上当前筛选条件：店主筛出「上个月 / 待付款」再点导出，
+      // 拿到的就应该是那一批，而不是全量 CSV 让他自己去 Excel 里删
+      const res = await fetch(`/api/orders/export?${buildFilters()}`)
+      if (!res.ok) {
+        setFocusNotice('导出失败，请确认登录状态后重试')
+        setExporting(false)
+        return
+      }
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -117,10 +138,40 @@ export default function AdminOrdersPage() {
         </button>
       </div>
 
-      <div className="flex gap-2 mb-4 overflow-x-auto scrollbar-hide">
+      <div className="flex gap-2 mb-3 overflow-x-auto scrollbar-hide">
         {TABS.map(t => (
           <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-full text-sm whitespace-nowrap ${tab === t ? 'bg-primary-500 text-white' : 'bg-warm-100 text-text-secondary'}`}>{t}</button>
         ))}
+      </div>
+
+      {/* 时间筛选：控件与店主端订单页一致（快捷档 + 自定义起止）。
+          下面的「导出CSV」会带上这里的条件一起请求 */}
+      <div className="mb-4 space-y-2">
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+          {ORDER_TIME_RANGES.map(r => (
+            <button
+              key={r.key}
+              onClick={() => { setTimeKey(r.key); setStartDate(''); setEndDate('') }}
+              className={`px-3 py-1 rounded-full text-xs whitespace-nowrap ${timeKey === r.key ? 'bg-primary-500 text-white' : 'bg-warm-100 text-text-secondary'}`}
+            >{r.label}</button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={startDate}
+            onChange={e => { setTimeKey('custom'); setStartDate(e.target.value) }}
+            className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-warm-300 text-xs bg-white text-text-secondary"
+          />
+          <span className="text-xs text-text-light">至</span>
+          <input
+            type="date"
+            value={endDate}
+            onChange={e => { setTimeKey('custom'); setEndDate(e.target.value) }}
+            className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-warm-300 text-xs bg-white text-text-secondary"
+          />
+        </div>
+        <p className="text-[10px] text-text-light">导出 CSV 会按上面选中的状态与日期区间筛选</p>
       </div>
 
       {focusNotice && (

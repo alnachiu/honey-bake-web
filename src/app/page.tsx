@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import ProductCard from '@/components/ProductCard'
 import { useAuth } from '@/contexts/AuthContext'
+import { imgUrl } from '@/lib/utils'
 // 兜底分类与商品表单共用同一份定义，避免两处各写一份、改一处漏一处
 import { DEFAULT_CATEGORIES } from '@/hooks/useCategories'
 
@@ -87,7 +88,7 @@ export default function HomePage() {
               <div key="banner" className="mt-4 rounded-2xl overflow-hidden shadow-sm h-36 relative">
                 {banners.length > 0 ? (
                   <>
-                    <img src={banners[currentBanner]?.image || banners[0]?.image} alt="banner" className="w-full h-full object-cover transition-opacity duration-500" />
+                    <img src={imgUrl(banners[currentBanner]?.image || banners[0]?.image, 800)} alt="banner" className="w-full h-full object-cover transition-opacity duration-500" />
                     <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
                       {banners.map((_: any, i: number) => (
                         <button key={i} onClick={() => setCurrentBanner(i)} className={`w-1.5 h-1.5 rounded-full transition-all ${i === currentBanner ? 'bg-white w-3' : 'bg-white/50'}`} />

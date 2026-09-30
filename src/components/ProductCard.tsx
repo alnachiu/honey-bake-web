@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { imgUrl } from '@/lib/utils'
 
 interface ProductCardProps {
   product: {
@@ -25,7 +26,7 @@ export default function ProductCard({ product }: ProductCardProps) {
     <Link href={`/products/${product.id}`} className="block bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
       <div className="aspect-square bg-warm-100 overflow-hidden">
         <img
-          src={images[0] || '/placeholder.jpg'}
+          src={imgUrl(images[0], 400) || '/placeholder.jpg'}
           alt={product.name}
           className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
         />

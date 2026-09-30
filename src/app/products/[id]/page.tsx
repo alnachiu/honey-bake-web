@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useCart } from '@/components/CartProvider'
 import { useAuth } from '@/contexts/AuthContext'
-import { formatPrice } from '@/lib/utils'
+import { formatPrice, imgUrl } from '@/lib/utils'
 
 export default function ProductDetailPage() {
   const { id } = useParams()
@@ -66,7 +66,7 @@ export default function ProductDetailPage() {
       {/* Image Swiper */}
       <div className="relative">
         <div className="aspect-square bg-warm-100">
-          <img src={images[currentImage] || '/placeholder.jpg'} alt={product.name} className="w-full h-full object-cover" />
+          <img src={imgUrl(images[currentImage], 800) || '/placeholder.jpg'} alt={product.name} className="w-full h-full object-cover" />
         </div>
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5">
           {images.map((_: any, i: number) => (
@@ -130,7 +130,7 @@ export default function ProductDetailPage() {
             <h3 className="text-sm font-semibold text-text-primary mb-3">📸 商品详情</h3>
             <div className="space-y-3">
               {detailImages.map((url: string, i: number) => (
-                <img key={i} src={url} alt={`${product.name}详情图${i+1}`} className="w-full rounded-xl bg-warm-100" />
+                <img key={i} src={imgUrl(url, 800)} alt={`${product.name}详情图${i+1}`} className="w-full rounded-xl bg-warm-100" />
               ))}
             </div>
           </div>

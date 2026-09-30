@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import ImageCropper from '@/components/ImageCropper'
+import { imgUrl } from '@/lib/utils'
 
 const SECTION_LABELS: Record<string, string> = {
   banner: '顶部轮播图',
@@ -265,7 +266,7 @@ export default function AdminLayoutPage() {
                 </div>
                 {banner.image ? (
                   <div className="relative group">
-                    <img src={banner.image} alt="banner preview" className="w-full h-28 rounded-xl object-cover bg-warm-100" />
+                    <img src={imgUrl(banner.image, 400)} alt="banner preview" className="w-full h-28 rounded-xl object-cover bg-warm-100" />
                     <button
                       onClick={() => { setCroppingIndex(index); setCroppingImage(banner.image) }}
                       className="absolute top-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"

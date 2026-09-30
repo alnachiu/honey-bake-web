@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCart } from '@/components/CartProvider'
-import { calcOrderAmount, calcOrderDeliveryFee, couponExpireText, isMemberActive, isValidPhone, couponAmountLabel, couponValueText, giftFromCoupon } from '@/lib/utils'
+import { calcOrderAmount, calcOrderDeliveryFee, couponExpireText, isMemberActive, isValidPhone, couponAmountLabel, couponValueText, giftFromCoupon, imgUrl } from '@/lib/utils'
 
 export default function CheckoutPage() {
   const router = useRouter()
@@ -354,7 +354,7 @@ export default function CheckoutPage() {
           <p className="text-sm font-medium mb-3">🛒 商品清单</p>
           {items.map((item, i) => (
             <div key={i} className="flex items-center gap-3 mb-3 last:mb-0">
-              <img src={item.image || '/placeholder.jpg'} alt={item.name} className="w-12 h-12 rounded-lg object-cover bg-warm-100" />
+              <img src={imgUrl(item.image, 128) || '/placeholder.jpg'} alt={item.name} className="w-12 h-12 rounded-lg object-cover bg-warm-100" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-text-primary truncate">{item.name}</p>
                 <p className="text-xs text-text-light">x{item.quantity}</p>

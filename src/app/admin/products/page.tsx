@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { imgUrl } from '@/lib/utils'
 
 export default function AdminProductsPage() {
   const router = useRouter()
@@ -74,7 +75,7 @@ export default function AdminProductsPage() {
         <div className="space-y-3">
           {products.map(p => (
             <div key={p.id} className="card flex gap-3">
-              <img src={(JSON.parse(p.images || '[]')[0]) || '/placeholder.jpg'} className="w-16 h-16 rounded-xl bg-warm-100 object-cover" />
+              <img src={imgUrl(JSON.parse(p.images || '[]')[0], 240) || '/placeholder.jpg'} className="w-16 h-16 rounded-xl bg-warm-100 object-cover" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-text-primary truncate">{p.name}</p>
                 <p className="text-primary-500 font-semibold text-sm mt-0.5">¥{p.price.toFixed(2)}</p>

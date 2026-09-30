@@ -23,6 +23,9 @@ model User {
   coupons          UserCoupon[]
   notifications    Notification[]
   membershipOrders MembershipOrder[]
+  // 与店主的站内会话。一个消费者最多一条（ChatConversation.userId 是 @unique），
+  // 所以这里是一对一而不是一对多。
+  chatConversation ChatConversation?
 }
 
 model Product {
@@ -210,6 +213,46 @@ model MembershipOrder {
   createdAt DateTime       @default(now())
 
   @@index([userId, status])
+}
+
+// 「联系小二」的站内聊天。
+//
+// 刻意不做成通用的多会话 IM：这个站只有一个店主，消费者要找的人永远是他，
+// 所以「一个消费者一条会话」就够，userId 直接 @unique。店主侧看到的是一个会话列表。
+//
+// 消息是**临时**的：整条会话闲置 7 天后连消息一起清掉（见 lib/chat.ts）。
+// 清除动作挂在下一次 GET /api/chat 上惰性执行，不引入 cron——
+// 项目里已有的「配送中超过 7 天自动完成」就是这么做的（api/orders/route.ts）。
+model ChatConversation {
+  id            String        @id @default(cuid())
+  userId        String        @unique
+  // 用户注销时连会话一起删；消息靠 ChatMessage 上的级联跟着走
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // 会话的「最后一条消息时刻」，同时也是 7 天清除的计时基准。
+  // 独立成一列而不是每次去 max(ChatMessage.createdAt)：列表排序和清理都要用它，
+  // 没有这列就得对每个会话各来一次子查询。
+  lastMessageAt DateTime      @default(now())
+  createdAt     DateTime      @default(now())
+  messages      ChatMessage[]
+
+  // 清理和店主侧列表排序都按这个字段扫
+  @@index([lastMessageAt])
+}
+
+model ChatMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  // user | admin。存角色而不是 userId：一来能直接决定气泡左右，
+  // 二来店主换账号/加一个管理员也不会让历史消息的归属错乱。
+  senderRole     String
+  body           String
+  // 收件方读过这条的时刻，null = 未读。未读数是店主侧列表的角标来源。
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
+
+  // 拉消息永远是「某个会话按时间正序」，这个复合索引正好覆盖
+  @@index([conversationId, createdAt])
 }
 
 model Notification {

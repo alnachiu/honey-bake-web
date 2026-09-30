@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getAuthUser } from '@/lib/auth'
 import { toCsv, csvResponse } from '@/lib/csv'
+import { resolveOrderDateRange } from '@/lib/utils'
 
 /**
  * 会员卡购买记录导出。
@@ -22,6 +23,12 @@ export async function GET(request: Request) {
 
     const where: any = {}
     if (status) where.status = status
+
+    // 与商品订单导出同一套日期解析（非法输入忽略、起止填反自动交换）。
+    // 会员卡记录是按年积攒的，店主对账时几乎总是只要某一段——没有这个条件，
+    // 导出只能拿全量再自己在 Excel 里筛。
+    const range = resolveOrderDateRange(searchParams.get('startDate'), searchParams.get('endDate'))
+    if (range) where.createdAt = range
 
     const orders = await prisma.membershipOrder.findMany({
       where,

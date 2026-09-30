@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useCart } from '@/components/CartProvider'
 import { useAuth } from '@/contexts/AuthContext'
-import { calcOrderDeliveryFee } from '@/lib/utils'
+import { calcOrderDeliveryFee, imgUrl } from '@/lib/utils'
 
 export default function CartPage() {
   const { items, totalCount, updateQuantity, removeItem } = useCart()
@@ -87,7 +87,7 @@ export default function CartPage() {
             <button onClick={() => toggleSelect(item.id)} className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${selectedIds.has(item.id) ? 'bg-primary-500 border-primary-500' : 'border-warm-400'}`}>
               {selectedIds.has(item.id) && <span className="text-white text-xs">✓</span>}
             </button>
-            <img src={item.image || '/placeholder.jpg'} alt={item.name} className="w-16 h-16 rounded-xl object-cover bg-warm-100 flex-shrink-0" />
+            <img src={imgUrl(item.image, 240) || '/placeholder.jpg'} alt={item.name} className="w-16 h-16 rounded-xl object-cover bg-warm-100 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-text-primary truncate">{item.name}</p>
               <p className="text-primary-500 font-semibold mt-1">¥{item.price.toFixed(2)}</p>

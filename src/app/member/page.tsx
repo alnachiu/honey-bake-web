@@ -363,7 +363,17 @@ export default function MemberPage() {
                 <p className="text-xs text-text-light mt-3">
                   金额：<span className="text-primary-500 font-semibold text-sm">¥{payOrder.price.toFixed(2)}</span>
                 </p>
-                <p className="text-[10px] text-text-light mt-2 text-center leading-relaxed">
+                {/* 转账备注手机号：店主是靠「到账的这笔钱是谁转的」来对单开卡的，
+                    微信转账不带备注时他只能凭金额猜——同一个套餐好几个人买，
+                    金额完全一样，猜错就是把会员开到了别人头上。
+                    这句必须显眼，所以用暖底 + 加粗，不用上面那种灰色小字。 */}
+                <div className="mt-3 rounded-xl bg-amber-50 border border-amber-300 px-3 py-2">
+                  <p className="text-xs font-semibold text-amber-700 text-center leading-relaxed">
+                    📢 请在转账备注会员登录手机号码，
+                    <br />好让小二给您推送权益哦
+                  </p>
+                </div>
+                <p className="text-[10px] text-text-light mt-3 text-center leading-relaxed">
                   付款后点下方「我已付款」告知店主，店主核对到账后会员自动开通
                 </p>
               </div>

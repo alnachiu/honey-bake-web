@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getAuthUser } from '@/lib/auth'
 import { toCsv, csvResponse } from '@/lib/csv'
+import { resolveOrderDateRange } from '@/lib/utils'
 
 export async function GET(request: Request) {
   try {
@@ -16,6 +17,12 @@ export async function GET(request: Request) {
 
     const where: any = {}
     if (status) where.status = status
+
+    // 日期区间与列表接口共用 resolveOrderDateRange（含非法输入忽略、起止填反自动交换）。
+    // 导出必须认这个条件：店主在后台筛出「上个月」再点导出，拿到的却永远是全量，
+    // 等于筛选对导单毫无作用——这正是这次要补的缺口。
+    const range = resolveOrderDateRange(searchParams.get('startDate'), searchParams.get('endDate'))
+    if (range) where.createdAt = range
 
     const orders = await prisma.order.findMany({
       where,

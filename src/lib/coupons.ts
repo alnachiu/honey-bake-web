@@ -282,7 +282,10 @@ export async function grantCouponsToUsers(
         title: '收到一张会员专属优惠券',
         content: `${c.name}：${couponValueText(c)}，已放入你的券包`,
         type: 'coupon',
-        link: '/coupons'
+        // 明确指向券包那个 tab。原先只给 '/coupons'，而那个页面当时是**领券中心**，
+        // 会员专属券按设计是 visible=false 的隐藏券，永远不在那儿列出来——
+        // 点了通知跳过去看到「暂无可用优惠券」，用户自然会以为券没发到。
+        link: '/coupons?tab=wallet'
       }))
     )
   })

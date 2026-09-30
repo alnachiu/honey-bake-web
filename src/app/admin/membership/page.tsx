@@ -2,9 +2,23 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { formatDate, couponValidityText, isValidPhone, couponAmountLabel, couponValueText } from '@/lib/utils'
+import { formatDate, couponValidityText, isValidPhone, couponAmountLabel, couponValueText, ORDER_TIME_RANGES, orderRangeToDates } from '@/lib/utils'
 
 const TABS = ['💳 套餐与折扣', '🎫 推送优惠券', '👥 会员数据', '📋 购买订单'] as const
+
+/**
+ * 购买订单 tab 的状态筛选。
+ *
+ * 默认落在「待确认收款」：开卡流程就是从这一格开始的，店主进这个 tab 十次有九次
+ * 是来核对到账的。已开通/已取消的记录是历史账，不该跟着一起堆在默认视图里——
+ * 要查的时候切一下状态，或者直接走导出。
+ */
+const MEMBER_ORDER_FILTERS = [
+  { key: 'pending', label: '待确认收款' },
+  { key: 'paid', label: '已开通' },
+  { key: 'cancelled', label: '已取消' },
+  { key: 'all', label: '全部' }
+]
 
 /** 套餐表单初值。couponIds 是「成为会员后自动推送」的那批券 */
 const EMPTY_PLAN_FORM = {
@@ -48,6 +62,12 @@ export default function AdminMembershipPage() {
   // 从「会员卡已付款」通知点进来时要定位到那一单
   const [highlightId, setHighlightId] = useState('')
   const [exporting, setExporting] = useState(false)
+  // 购买订单 tab 的筛选。列表只做客户端过滤（orders 依然整份拉回来，
+  // 「会员数据」tab 的待确认收款列表还要用），导出则把条件带给服务端
+  const [orderStatusFilter, setOrderStatusFilter] = useState('pending')
+  const [timeKey, setTimeKey] = useState('all')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
 
   const toast = (text: string) => {
     setMessage(text)
@@ -74,9 +94,12 @@ export default function AdminMembershipPage() {
       const timer = setTimeout(() => setHighlightId(''), 5000)   // 高亮过几秒淡出
       return () => clearTimeout(timer)
     }
-    // 不在「待确认收款」里，多半是点通知之前已经确认/作废过了，切到购买订单看结果
+    // 不在「待确认收款」里，多半是点通知之前已经确认/作废过了，切到购买订单看结果。
+    // 同时把状态筛成「全部」——这一单既然已经不在待确认里，默认那个筛选会把它藏起来，
+    // 高亮一个看不见的行等于没定位。
     if (orders.some(o => o.id === highlightId)) {
       setTab(TABS[3])
+      setOrderStatusFilter('all')
       const timer = setTimeout(() => setHighlightId(''), 5000)
       return () => clearTimeout(timer)
     }
@@ -85,7 +108,15 @@ export default function AdminMembershipPage() {
   const exportMembershipOrders = async () => {
     setExporting(true)
     try {
-      const res = await fetch('/api/membership/orders/export')
+      // 与界面上选中的筛选保持一致：店主挑了「已开通 + 今年 8 月」再导出，
+      // 就该拿到那一批——以前这里不传任何参数，导出的永远是全部历史
+      const params = new URLSearchParams()
+      if (orderStatusFilter !== 'all') params.set('status', orderStatusFilter)
+      const dates = timeKey === 'custom' ? { startDate, endDate } : orderRangeToDates(timeKey)
+      if (dates.startDate) params.set('startDate', dates.startDate)
+      if (dates.endDate) params.set('endDate', dates.endDate)
+
+      const res = await fetch(`/api/membership/orders/export?${params}`)
       if (!res.ok) { toast('导出失败，请稍后重试'); setExporting(false); return }
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
@@ -333,6 +364,12 @@ export default function AdminMembershipPage() {
     .sort((a, b) => Number(!!b.payClaimedAt) - Number(!!a.payClaimedAt))
   const paidCount = orders.filter(o => o.status === 'paid').length
   const paidAmount = orders.filter(o => o.status === 'paid').reduce((s, o) => s + (o.price || 0), 0)
+
+  // 购买订单 tab 实际列出来的那一批。上面的统计卡与「会员数据」tab 仍看全量，
+  // 只有这个列表受筛选影响——店主核对历史时爱怎么切都不会让汇总数字跟着跳。
+  const shownOrders = orderStatusFilter === 'all'
+    ? orders
+    : orders.filter(o => o.status === orderStatusFilter)
 
   if (loading) return <div className="page-container pt-4"><div className="h-48 skeleton rounded-2xl" /></div>
 
@@ -644,18 +681,68 @@ export default function AdminMembershipPage() {
             </div>
           </div>
 
-          {/* 会员卡购买记录单独导一份，与订单导出分开（两个独立 CSV 按钮） */}
+          {/* 状态筛选：默认停在「待确认收款」，开卡流程从这一格开始 */}
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+            {MEMBER_ORDER_FILTERS.map(f => (
+              <button
+                key={f.key}
+                onClick={() => setOrderStatusFilter(f.key)}
+                className={`px-3 py-1 rounded-full text-xs whitespace-nowrap ${orderStatusFilter === f.key ? 'bg-primary-500 text-white' : 'bg-warm-100 text-text-secondary'}`}
+              >
+                {f.label}
+                {f.key !== 'all' && (
+                  <span className="ml-1 opacity-70">{orders.filter(o => o.status === f.key).length}</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* 日期区间：只作用于导出。列表本身不按日期过滤——
+              店主核对待办时需要看到全部待确认的，哪怕它是上个月下的单 */}
+          <div className="space-y-2">
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+              {ORDER_TIME_RANGES.map(r => (
+                <button
+                  key={r.key}
+                  onClick={() => { setTimeKey(r.key); setStartDate(''); setEndDate('') }}
+                  className={`px-3 py-1 rounded-full text-xs whitespace-nowrap ${timeKey === r.key ? 'bg-primary-500 text-white' : 'bg-warm-100 text-text-secondary'}`}
+                >{r.label}</button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => { setTimeKey('custom'); setStartDate(e.target.value) }}
+                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-warm-300 text-xs bg-white text-text-secondary"
+              />
+              <span className="text-xs text-text-light">至</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={e => { setTimeKey('custom'); setEndDate(e.target.value) }}
+                className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-warm-300 text-xs bg-white text-text-secondary"
+              />
+            </div>
+          </div>
+
+          {/* 会员卡购买记录单独导一份，与订单导出分开（两个独立 CSV 按钮）。
+              导出按上面的状态 + 日期区间筛，列表本身不受日期影响。 */}
           <button
             onClick={exportMembershipOrders}
             disabled={exporting || orders.length === 0}
             className="w-full py-2 rounded-full bg-green-500 text-white text-xs disabled:opacity-50"
           >
-            {exporting ? '导出中...' : '📥 导出会员卡购买记录 CSV'}
+            {exporting ? '导出中...' : '📥 导出会员卡购买记录 CSV（按上面选中的状态与日期）'}
           </button>
 
-          {orders.length === 0 ? (
-            <div className="text-center py-10"><p className="text-text-light text-sm">暂无购买记录</p></div>
-          ) : orders.map(o => {
+          {shownOrders.length === 0 ? (
+            <div className="text-center py-10">
+              <p className="text-text-light text-sm">
+                {orderStatusFilter === 'pending' ? '没有待确认收款的记录' : '暂无购买记录'}
+              </p>
+            </div>
+          ) : shownOrders.map(o => {
             const st = ORDER_STATUS[o.status] || { text: o.status, cls: 'text-text-light' }
             return (
               <div

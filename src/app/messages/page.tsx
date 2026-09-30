@@ -11,7 +11,25 @@ const TYPE_ICON: Record<string, string> = {
   coupon: '🎫',
   member: '💎',
   order: '📋',
+  // 站内聊天的来消息提醒（顾客发给店主 / 店主回复顾客）
+  chat: '💬',
   system: '🔔'
+}
+
+/** 会话列表接口返回的未读数：聊天有独立的未读口径，与通知的未读不是一回事 */
+function ChatEntryCard({ isAdmin }: { isAdmin: boolean }) {
+  return (
+    <Link href="/chat" className="card mb-3 flex items-center gap-3 border-primary-200 bg-primary-50/40">
+      <span className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-lg flex-shrink-0">💬</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-text-primary">{isAdmin ? '顾客消息' : '联系店主'}</p>
+        <p className="text-xs text-text-light mt-0.5">
+          {isAdmin ? '顾客通过「联系小二」发来的消息' : '有问题直接找店主，随时可以聊'}
+        </p>
+      </div>
+      <span className="text-text-light flex-shrink-0">›</span>
+    </Link>
+  )
 }
 
 export default function MessagesPage() {
@@ -92,6 +110,10 @@ export default function MessagesPage() {
           </button>
         )}
       </div>
+
+      {/* 找店主的入口。消息中心是用户遇到问题时最先点进来的地方，
+          把聊天入口放在这儿，比只藏在订单页的按钮里更容易被找到 */}
+      <ChatEntryCard isAdmin={user.role === 'admin'} />
 
       {loading ? (
         <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-20 skeleton rounded-2xl" />)}</div>

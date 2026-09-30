@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useCategories } from '@/hooks/useCategories'
+import { imgUrl } from '@/lib/utils'
 
 export default function EditProductPage() {
   const { id } = useParams()
@@ -194,7 +195,7 @@ export default function EditProductPage() {
           <div className="flex gap-2 flex-wrap">
             {form.images.map((url: string, i: number) => (
               <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden bg-warm-100 group">
-                <img src={url} alt={`主图${i+1}`} className="w-full h-full object-cover" />
+                <img src={imgUrl(url, 240)} alt={`主图${i+1}`} className="w-full h-full object-cover" />
                 {/* 替换按钮 */}
                 <button type="button" onClick={() => replaceImage(i)} className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
                   <span className="text-white text-xs font-medium bg-black/60 px-2 py-1 rounded-full">替换</span>
@@ -220,7 +221,7 @@ export default function EditProductPage() {
           <div className="flex gap-2 flex-wrap">
             {form.detailImages.map((url: string, i: number) => (
               <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden bg-warm-100">
-                <img src={url} alt={`详情图${i+1}`} className="w-full h-full object-cover" />
+                <img src={imgUrl(url, 240)} alt={`详情图${i+1}`} className="w-full h-full object-cover" />
                 <button type="button" onClick={() => removeDetailImage(i)} className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/50 text-white rounded-full text-xs flex items-center justify-center">✕</button>
               </div>
             ))}
