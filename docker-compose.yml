@@ -14,5 +14,7 @@ services:
       - ./data:/app/data
     environment:
       TZ: Asia/Shanghai
-      # JWT_SECRET 来自同目录 .env 文件（见下方操作）；不填时用默认值
-      JWT_SECRET: ${JWT_SECRET:-honey-bake-jwt-secret-key-2026}
+      # JWT_SECRET 来自同目录 .env（compose 自动读取该文件做变量替换）。
+      # 用 `:?` 而不是 `:-`：没配就在 `docker compose up` 当场报错并给出提示，
+      # 而不是悄悄用一个公开的默认密钥把服务跑起来。
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 未设置：请在项目目录的 .env 里写入 JWT_SECRET=<新的随机密钥>}

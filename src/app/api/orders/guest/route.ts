@@ -96,7 +96,13 @@ export async function POST(request: Request) {
     // 这正是店主该看到的异常，导出里标成会员才查得出来。
     const wasMember = isMemberActive(user.memberExpire)
 
-    // 创建地址
+    // 创建地址。
+    // 先把其它默认地址取消掉：原写法直接 isDefault: true，每下单一一次就多留一条
+    // 默认地址，用户地址簿里会出现好几个「默认」，而结算页只认第一个找到的。
+    await prisma.address.updateMany({
+      where: { userId: user.id, isDefault: true },
+      data: { isDefault: false }
+    })
     const addr = await prisma.address.create({
       data: {
         userId: user.id,
@@ -120,6 +126,11 @@ export async function POST(request: Request) {
         totalAmount,
         remark: remark || '',
         addressId: addr.id,
+        // 收货信息快照，与 POST /api/orders 同一口径：地址被改被删都不影响历史订单
+        receiverName: addr.name,
+        receiverPhone: addr.phone,
+        receiverRegion: addr.region,
+        receiverDetail: addr.detail,
         wasMember,
         status: 'pending',
         items: { create: orderItems }

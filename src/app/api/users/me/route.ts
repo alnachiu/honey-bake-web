@@ -9,7 +9,15 @@ export async function GET() {
     if (!user) {
       return NextResponse.json({ error: '未登录' }, { status: 401 })
     }
-    return NextResponse.json({ user })
+    // hasPassword 决定「我的」页那块表单是「修改密码」还是「设置密码」。
+    // 单独查一次而不是塞进 getAuthUser()：后者的返回值会被多个路由直接
+    // 序列化给前端，把 password 带进去等于到处漏哈希。
+    // 也不能缓存到前端：店主随时可能在后台把密码清掉。
+    const row = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { password: true }
+    })
+    return NextResponse.json({ user: { ...user, hasPassword: !!row?.password } })
   } catch (error) {
     return NextResponse.json({ error: '获取用户信息失败' }, { status: 500 })
   }
@@ -53,10 +61,13 @@ export async function PUT(request: Request) {
 
     const updatedUser = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { id: true, email: true, name: true, phone: true, avatar: true, role: true, memberExpire: true }
+      select: { id: true, email: true, name: true, phone: true, avatar: true, role: true, memberExpire: true, password: true }
     })
+    if (!updatedUser) return NextResponse.json({ error: '用户不存在' }, { status: 404 })
 
-    return NextResponse.json({ user: updatedUser })
+    // 与 GET 同口径：只暴露「有没有密码」这个布尔，不返回哈希本身
+    const { password, ...rest } = updatedUser
+    return NextResponse.json({ user: { ...rest, hasPassword: !!password } })
   } catch (error) {
     return NextResponse.json({ error: '更新失败' }, { status: 500 })
   }

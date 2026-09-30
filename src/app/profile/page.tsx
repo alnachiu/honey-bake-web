@@ -17,6 +17,12 @@ export default function ProfilePage() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [pwdLoading, setPwdLoading] = useState(false)
+  // 是否已设密码：手机号自动建号的账号、以及被店主在后台清除过密码的账号都是 false，
+  // 这时表单要显示成「设置密码」且不要求原密码。
+  // 默认 true 是安全的：唯一会走到「undefined」的路径是邮箱密码登录，
+  // 而能那样登录进来的人必然有密码。手机号登录的两处都会 refreshUser()，
+  // 拿到 /api/users/me 下发的真实值，不会被这个默认值盖住。
+  const [hasPassword, setHasPassword] = useState(true)
   // 绑定手机号：手机号是会员卡的凭证，邮箱注册的账号默认没有手机号
   const [showPhoneModal, setShowPhoneModal] = useState(false)
   const [phoneInput, setPhoneInput] = useState('')
@@ -29,6 +35,12 @@ export default function ProfilePage() {
     if (authLoading) return
     if (!user) router.push('/login')
   }, [user, authLoading])
+
+  // 跟着认证状态同步。用 state 而不是每次读 user.hasPassword：
+  // 用户刚在本页设完密码，user 对象还是旧的，界面得立刻切回「修改密码」。
+  useEffect(() => {
+    if (user) setHasPassword(user.hasPassword !== false)
+  }, [user])
 
   useEffect(() => {
     if (user) setAvatarUrl(user.avatar || '')
@@ -91,6 +103,8 @@ export default function ProfilePage() {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault()
     setMessage('')
+    // 没密码的账号不校验原密码（服务端同样会跳过），所以这里也不该拦
+    if (hasPassword && !oldPassword) { setMessage('请输入原密码'); return }
     if (newPassword.length < 6) { setMessage('新密码至少6位'); return }
     if (newPassword !== confirmPassword) { setMessage('两次输入的新密码不一致'); return }
     setPwdLoading(true)
@@ -102,7 +116,9 @@ export default function ProfilePage() {
       })
       const data = await res.json()
       if (res.ok) {
-        setMessage('✅ 密码修改成功，下次登录请用新密码')
+        setMessage(`✅ 密码${hasPassword ? '修改' : '设置'}成功，下次登录请用新密码`)
+        // 设置成功后这个账号就有密码了，表单要从「设置密码」切回「修改密码」
+        setHasPassword(true)
         setOldPassword(''); setNewPassword(''); setConfirmPassword('')
       } else {
         setMessage(data.error || '修改失败')
@@ -221,6 +237,11 @@ export default function ProfilePage() {
             : <span className="text-[10px] text-text-light mr-1">未开通</span>}
           <span className="text-text-light">›</span>
         </Link>
+        <Link href="/addresses" className="flex items-center py-3.5">
+          <span className="text-lg mr-3">📍</span>
+          <span className="text-sm text-text-primary flex-1">地址管理</span>
+          <span className="text-text-light">›</span>
+        </Link>
         <Link href="/messages" className="flex items-center py-3.5">
           <span className="text-lg mr-3">🔔</span>
           <span className="text-sm text-text-primary flex-1">消息中心</span>
@@ -228,14 +249,22 @@ export default function ProfilePage() {
         </Link>
       </div>
 
-      {/* 修改密码 */}
+      {/* 密码。没有密码的账号（手机号自动建号 / 被店主清除过）显示成「设置密码」，
+          并且不要求填原密码——他本来就没有密码，要他填等于把路堵死 */}
       <div className="card mt-3">
-        <p className="text-sm font-medium text-text-primary mb-3">🔒 修改密码</p>
-        <form onSubmit={handleChangePassword} className="space-y-3">
-          <div>
-            <label className="text-xs text-text-secondary block mb-1">原密码</label>
-            <input type="password" className="input-field" placeholder="请输入原密码" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required />
-          </div>
+        <p className="text-sm font-medium text-text-primary mb-1">🔒 {hasPassword ? '修改密码' : '设置密码'}</p>
+        {!hasPassword && (
+          <p className="text-xs text-text-light mb-3 leading-relaxed">
+            你目前是用手机号免密登录的。设置密码后，也可以用邮箱 + 密码登录。
+          </p>
+        )}
+        <form onSubmit={handleChangePassword} className={`space-y-3 ${hasPassword ? '' : 'mt-3'}`}>
+          {hasPassword && (
+            <div>
+              <label className="text-xs text-text-secondary block mb-1">原密码</label>
+              <input type="password" className="input-field" placeholder="请输入原密码" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required />
+            </div>
+          )}
           <div>
             <label className="text-xs text-text-secondary block mb-1">新密码</label>
             <input type="password" className="input-field" placeholder="至少6位" value={newPassword} onChange={e => setNewPassword(e.target.value)} required />
@@ -245,7 +274,7 @@ export default function ProfilePage() {
             <input type="password" className="input-field" placeholder="再次输入新密码" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required />
           </div>
           <button type="submit" className="btn-primary w-full" disabled={pwdLoading}>
-            {pwdLoading ? '保存中...' : '保存新密码'}
+            {pwdLoading ? '保存中...' : (hasPassword ? '保存新密码' : '设置密码')}
           </button>
         </form>
       </div>
@@ -259,6 +288,7 @@ export default function ProfilePage() {
             <Link href="/admin/orders" className="p-3 bg-warm-50 rounded-xl text-center"><p className="text-lg">📋</p><p className="text-xs text-text-secondary mt-1">订单管理</p></Link>
             <Link href="/admin/coupons" className="p-3 bg-warm-50 rounded-xl text-center"><p className="text-lg">🎫</p><p className="text-xs text-text-secondary mt-1">优惠券</p></Link>
             <Link href="/admin/membership" className="p-3 bg-warm-50 rounded-xl text-center"><p className="text-lg">💎</p><p className="text-xs text-text-secondary mt-1">会员卡</p></Link>
+            <Link href="/admin/users" className="p-3 bg-warm-50 rounded-xl text-center"><p className="text-lg">👤</p><p className="text-xs text-text-secondary mt-1">顾客</p></Link>
           </div>
         </div>
       )}

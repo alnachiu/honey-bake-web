@@ -50,7 +50,7 @@ async function main() {
     body: JSON.stringify({ email: 'admin@honeybake.com', password: 'admin123' })
   })
   if (!loginRes.ok) {
-    console.log('无法登录管理员账号(admin@honeybake.com/admin123)，先跑一次 /api/seed 或改脚本里的口令')
+    console.log('无法登录管理员账号(admin@honeybake.com/admin123)，请先跑 `npm run db:seed` 或改脚本里的口令')
     process.exit(1)
   }
 

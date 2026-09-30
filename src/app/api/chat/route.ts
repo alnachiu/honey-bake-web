@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth'
 import { notifyAdmins } from '@/lib/notify'
-import { purgeExpiredChats, chatExpireAt, chatPreview, CHAT_RETENTION_DAYS } from '@/lib/chat'
+import { purgeExpiredChats, chatExpireAt, chatPreview, visibleTo, CHAT_RETENTION_DAYS } from '@/lib/chat'
 
 /**
  * 单条消息的长度上限。
@@ -16,16 +16,24 @@ const MAX_BODY = 500
 /** 一次最多返回多少条历史消息，防止老会话把响应体撑大 */
 const MAX_HISTORY = 200
 
-/** 会话列表里带上最后一条消息，用于列表预览 */
-const conversationListInclude = {
+/**
+ * 会话列表里带上最后一条消息，用于列表预览。
+ *
+ * take: 1 的 where 必须带 visibleTo：不带的话，店主清空过某条会话之后，
+ * 列表预览显示的会是那条已经被他自己清掉的消息。
+ */
+const conversationListInclude = (viewer: 'user' | 'admin') => ({
   user: { select: { id: true, name: true, phone: true, email: true } },
-  messages: { orderBy: { createdAt: 'desc' as const }, take: 1 }
-}
+  messages: { where: visibleTo(viewer), orderBy: { createdAt: 'desc' as const }, take: 1 }
+})
 
-/** 单个会话的消息拉取：取最新 N 条再翻回正序（直接正序 take 会拿到最老的 N 条） */
-async function loadMessages(conversationId: string) {
+/**
+ * 单个会话的消息拉取：取最新 N 条再翻回正序（直接正序 take 会拿到最老的 N 条）。
+ * viewer 决定过滤哪一边的「已清除」标记——只从清除方自己这边消失。
+ */
+async function loadMessages(conversationId: string, viewer: 'user' | 'admin') {
   const rows = await prisma.chatMessage.findMany({
-    where: { conversationId },
+    where: { conversationId, ...visibleTo(viewer) },
     orderBy: { createdAt: 'desc' },
     take: MAX_HISTORY
   })
@@ -68,17 +76,22 @@ export async function GET(request: Request) {
           role: 'admin',
           conversation: { id: conversation.id, lastMessageAt: conversation.lastMessageAt },
           peer: conversation.user,
-          messages: await loadMessages(conversation.id),
+          messages: await loadMessages(conversation.id, 'admin'),
           expireAt: chatExpireAt(conversation.lastMessageAt),
           retentionDays: CHAT_RETENTION_DAYS
         })
       }
 
       // 没带 userId → 会话列表
-      const conversations = await prisma.chatConversation.findMany({
+      const allConversations = await prisma.chatConversation.findMany({
         orderBy: { lastMessageAt: 'desc' },
-        include: conversationListInclude
+        include: conversationListInclude('admin')
       })
+
+      // 店主清空过的会话，在**他这边**不该再出现。判据是「这个会话里还有没有
+      // 他能看见的消息」——一条都没有就藏起来；顾客之后又发消息，那条新消息
+      // deletedForAdmin=false，会话自己就重新冒出来了，不需要额外的还原逻辑。
+      const conversations = allConversations.filter(c => c.messages.length > 0)
 
       // 未读 = 对方发来且我没读过的。此处不区分是哪个管理员读的：
       // 店主账号可能不止一个（notifyAdmins 也是广播给所有 role='admin' 的账号），
@@ -90,7 +103,9 @@ export async function GET(request: Request) {
             where: {
               conversationId: { in: conversations.map(c => c.id) },
               senderRole: 'user',
-              readAt: null
+              readAt: null,
+              // 已清掉的消息不该再贡献未读数，否则店主清空后角标还挂着数字
+              deletedForAdmin: false
             },
             _count: { _all: true }
           })
@@ -125,7 +140,7 @@ export async function GET(request: Request) {
       conversation: conversation
         ? { id: conversation.id, lastMessageAt: conversation.lastMessageAt }
         : null,
-      messages: conversation ? await loadMessages(conversation.id) : [],
+      messages: conversation ? await loadMessages(conversation.id, 'user') : [],
       expireAt: conversation ? chatExpireAt(conversation.lastMessageAt) : null,
       retentionDays: CHAT_RETENTION_DAYS
     })
@@ -245,5 +260,53 @@ export async function PUT(request: Request) {
     return NextResponse.json({ success: true, count })
   } catch (error: any) {
     return NextResponse.json({ error: error.message || '操作失败' }, { status: 500 })
+  }
+}
+
+/**
+ * 清空聊天。**只从调用方自己这边消失**，对方的记录一条不动。
+ *
+ * 实现是给自己这边打个标记（ChatMessage.deletedForUser / deletedForAdmin），
+ * 公共的消息行仍然留着——因为对面还要看。真正的物理删除由 7 天闲置清理兜底
+ * （chat.ts 的 purgeExpiredChats），那时双方都不再需要了。
+ *
+ * 消费者清自己的那条会话；店主必须带 userId 指明清哪个顾客，不传就报错——
+ * 否则一个手滑的 DELETE 会把所有会话从店主这边一次性抹掉。
+ */
+export async function DELETE(request: Request) {
+  try {
+    const user = await requireAuth()
+    let userId = ''
+    try {
+      const data = await request.json()
+      userId = String(data?.userId || '')
+    } catch {
+      // 消费者清空自己那条会话时不需要 body
+    }
+
+    if (user.role === 'admin') {
+      if (!userId) {
+        return NextResponse.json({ error: '请指定要清空的会话' }, { status: 400 })
+      }
+      const conversation = await prisma.chatConversation.findUnique({ where: { userId } })
+      if (!conversation) return NextResponse.json({ success: true, count: 0 })
+
+      const { count } = await prisma.chatMessage.updateMany({
+        where: { conversationId: conversation.id, deletedForAdmin: false },
+        data: { deletedForAdmin: true }
+      })
+      return NextResponse.json({ success: true, count })
+    }
+
+    const conversation = await prisma.chatConversation.findUnique({ where: { userId: user.id } })
+    if (!conversation) return NextResponse.json({ success: true, count: 0 })
+
+    const { count } = await prisma.chatMessage.updateMany({
+      where: { conversationId: conversation.id, deletedForUser: false },
+      data: { deletedForUser: true }
+    })
+    return NextResponse.json({ success: true, count })
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message || '清空失败' }, { status: 500 })
   }
 }

@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { formatDate } from '@/lib/utils'
+import { useLongPress, LONG_PRESS_STYLE } from '@/hooks/useLongPress'
 
 const TYPE_ICON: Record<string, string> = {
   coupon: '🎫',
@@ -14,6 +15,35 @@ const TYPE_ICON: Record<string, string> = {
   // 站内聊天的来消息提醒（顾客发给店主 / 店主回复顾客）
   chat: '💬',
   system: '🔔'
+}
+
+/**
+ * 单条通知。抽成组件是因为长按要用 hook，而 hook 不能写在 map 循环里。
+ */
+function NotificationItem({ n, onOpen, onDelete }: { n: any; onOpen: (n: any) => void; onDelete: (n: any) => void }) {
+  // 长按 = 删除。确认框用系统原生 confirm，与后台其它危险操作保持一致
+  // （见 admin/coupons/page.tsx），且文案把影响面写清楚。
+  const longPress = useLongPress(() => onDelete(n))
+
+  return (
+    <div
+      {...longPress}
+      onClick={() => onOpen(n)}
+      style={LONG_PRESS_STYLE}
+      className={`card flex gap-3 cursor-pointer ${n.read ? '' : 'border-primary-200 bg-primary-50/40'}`}
+    >
+      <span className="text-xl flex-shrink-0">{TYPE_ICON[n.type] || '🔔'}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium text-text-primary truncate">{n.title}</p>
+          {!n.read && <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />}
+        </div>
+        {n.content && <p className="text-xs text-text-secondary mt-1 leading-relaxed">{n.content}</p>}
+        <p className="text-[10px] text-text-light mt-1.5">{formatDate(n.createdAt)}</p>
+      </div>
+      {n.link && <span className="text-text-light self-center flex-shrink-0">›</span>}
+    </div>
+  )
 }
 
 /** 会话列表接口返回的未读数：聊天有独立的未读口径，与通知的未读不是一回事 */
@@ -87,6 +117,32 @@ export default function MessagesPage() {
     if (n.link) router.push(n.link)
   }
 
+  /** 长按删除单条通知。通知是按用户隔离的，删掉就是真删 */
+  const deleteMessage = async (n: any) => {
+    if (!confirm(`删除这条消息？\n\n「${n.title}」\n\n删除后无法恢复。`)) return
+
+    // 先本地移除：列表每 15 秒轮询刷新一次，等接口回来再动会有明显的回弹感
+    setList(prev => prev.filter(m => m.id !== n.id))
+    const wasUnread = !n.read
+    if (wasUnread) setUnreadCount(prev => Math.max(0, prev - 1))
+
+    try {
+      const res = await fetch('/api/notifications', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [n.id] })
+      })
+      const data = await res.json()
+      // 未读数以服务端为准：本地只做了乐观减法，并发情况下可能不准
+      if (typeof data?.unreadCount === 'number') setUnreadCount(data.unreadCount)
+      else if (!res.ok) fetchMessages(true)
+    } catch (err) {
+      console.error(err)
+      // 请求失败就把列表拉回真实状态，别让界面显示成「已删除」而库里还在
+      fetchMessages(true)
+    }
+  }
+
   if (authLoading) {
     return (
       <div className="page-container pt-4 space-y-3">
@@ -126,22 +182,7 @@ export default function MessagesPage() {
       ) : (
         <div className="space-y-2">
           {list.map(n => (
-            <div
-              key={n.id}
-              onClick={() => openMessage(n)}
-              className={`card flex gap-3 cursor-pointer ${n.read ? '' : 'border-primary-200 bg-primary-50/40'}`}
-            >
-              <span className="text-xl flex-shrink-0">{TYPE_ICON[n.type] || '🔔'}</span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-text-primary truncate">{n.title}</p>
-                  {!n.read && <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />}
-                </div>
-                {n.content && <p className="text-xs text-text-secondary mt-1 leading-relaxed">{n.content}</p>}
-                <p className="text-[10px] text-text-light mt-1.5">{formatDate(n.createdAt)}</p>
-              </div>
-              {n.link && <span className="text-text-light self-center flex-shrink-0">›</span>}
-            </div>
+            <NotificationItem key={n.id} n={n} onOpen={openMessage} onDelete={deleteMessage} />
           ))}
         </div>
       )}

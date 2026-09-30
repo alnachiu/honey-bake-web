@@ -68,7 +68,7 @@ async function main() {
 
   // 会员折扣设成 95 折，最后要还原
   const rateRes = await admin.req('/api/settings', { method: 'PUT', body: JSON.stringify({ memberDiscount: 0.95 }) })
-  if (!rateRes.ok) { console.log('设置会员折扣失败，先跑一次 /api/seed 或检查 /api/settings'); process.exit(1) }
+  if (!rateRes.ok) { console.log('设置会员折扣失败，请先跑 `npm run db:seed` 或检查 /api/settings'); process.exit(1) }
 
   const planRes = await admin.req('/api/membership/plans', {
     method: 'POST',

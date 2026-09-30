@@ -44,6 +44,17 @@ export async function purgeExpiredChats(
   return count
 }
 
+/**
+ * 「清空聊天」是按边生效的：消息表双方共用，谁清了就给自己那边打个标记。
+ * 这个函数返回**某一方视角下可见消息**的过滤条件，所有查询都必须带上它——
+ * 漏掉任何一处都会出现「清掉了还看得见」，或者店主侧的未读角标把已清掉的消息又算进去。
+ *
+ * 收角色而不是布尔值，是为了让调用点写出来的东西一眼能看懂是哪一边的视角。
+ */
+export function visibleTo(viewer: 'user' | 'admin') {
+  return viewer === 'admin' ? { deletedForAdmin: false } : { deletedForUser: false }
+}
+
 /** 通知正文里的消息预览：单行、截断，避免整段话灌进通知列表 */
 export function chatPreview(body: string, max = 40): string {
   const flat = (body || '').replace(/\s+/g, ' ').trim()

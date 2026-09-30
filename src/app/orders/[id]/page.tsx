@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { formatDate, getOrderStatusText, imgUrl } from '@/lib/utils'
+import { resolveReceiver } from '@/lib/receiver'
 import OrderStatusActions from '@/components/OrderStatusActions'
 
 const STATUS_COLORS: Record<string, string> = { pending: '#E6A23C', paid: '#67C23A', making: '#409EFF', delivering: '#E8806A', completed: '#909399', cancelled: '#C0C4CC' }
@@ -29,6 +30,10 @@ export default function OrderDetailPage() {
   // 店主看的是别人的单：付款码、「已扫码支付」、取消/确认收货这些消费者动作
   // 对他都不成立（「已扫码支付」还会被服务端按归属 403），整体换成管理操作。
   const isAdmin = user?.role === 'admin'
+
+  // 收货信息：优先用订单上的快照，老订单没有快照则回退到关联的地址行。
+  // 顾客在「地址管理」里改过地址，这里显示的仍是下单当时那一份。
+  const receiver = resolveReceiver(order, order?.address)
 
   useEffect(() => {
     // 等认证恢复完再判，否则刷新时 user 还是 null，会被误踢去登录页
@@ -174,11 +179,12 @@ export default function OrderDetailPage() {
       {/* Order Info */}
       <div className="px-4 mt-3">
         <div className="card space-y-2">
-          {order.address && (
+          {/* 优先用下单时的快照，老订单没有快照才回退到关联地址——见 lib/receiver.ts */}
+          {receiver && (
             <div className="pb-2 border-b border-warm-100 mb-2">
               <p className="text-xs text-text-light mb-1">收货地址</p>
-              <p className="text-sm font-medium">{order.address.name} {order.address.phone}</p>
-              <p className="text-xs text-text-secondary">{order.address.region} {order.address.detail}</p>
+              <p className="text-sm font-medium">{receiver.name} {receiver.phone}</p>
+              <p className="text-xs text-text-secondary">{receiver.region} {receiver.detail}</p>
             </div>
           )}
           {/* 付款码那块对店主是隐藏的，所以「顾客说付了」这条必须在这里露出，

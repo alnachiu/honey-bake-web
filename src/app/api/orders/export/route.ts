@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getAuthUser } from '@/lib/auth'
 import { toCsv, csvResponse } from '@/lib/csv'
 import { resolveOrderDateRange } from '@/lib/utils'
+import { resolveReceiver, formatReceiver } from '@/lib/receiver'
 
 export async function GET(request: Request) {
   try {
@@ -39,15 +40,18 @@ export async function GET(request: Request) {
       const items = o.items.map(i => `${i.name}x${i.quantity}`).join('; ')
       // 买赠券带来的赠品，单独一列——它不在 items 里（不关联商品、不计金额）
       const gift = o.giftName && o.giftQuantity > 0 ? `${o.giftName}x${o.giftQuantity}` : ''
-      const address = o.address ? `${o.address.region} ${o.address.detail}` : ''
+      // 收货信息：优先下单时的快照，老订单回退到关联地址（见 lib/receiver.ts）。
+      // 导出是对账用的，地址被顾客改过之后这里必须仍是下单当时那一份。
+      const receiver = resolveReceiver(o, o.address)
+      const address = formatReceiver(receiver)
       // 这份映射刻意与 lib/utils 的 getOrderStatusText 不同：导出面向对账，
       // 「已付款」比界面上的「待制作」更直观。改这里前先想清楚店主是否依赖它。
       const statusMap: Record<string, string> = { pending: '待付款', paid: '已付款', making: '制作中', delivering: '配送中', completed: '已完成', cancelled: '已取消' }
       return [
         o.orderNo,
         new Date(o.createdAt).toLocaleString('zh-CN'),
-        o.address?.name || o.user?.name || '',
-        o.address?.phone || o.user?.phone || '',
+        receiver?.name || o.user?.name || '',
+        receiver?.phone || o.user?.phone || '',
         address,
         items,
         gift,

@@ -13,7 +13,10 @@ RUN apt-get update \
 # 生产默认值指向持久化卷挂载点 /app/data，Sealos 上可覆盖
 ENV DATABASE_URL=file:/app/data/prisma/dev.db
 ENV UPLOAD_DIR=/app/data/uploads
-ENV JWT_SECRET=honey-bake-jwt-secret-key-2026
+# 这里曾经有一行 ENV JWT_SECRET=...（硬编码默认密钥）。
+# 那是把签名密钥烧进镜像：镜像能被拉取 = 密钥泄漏，而且它会在构建期被
+# next.config.js 的 env 块内联进产物，导致服务器上换 .env 也无效。
+# JWT_SECRET 现在**只**由运行时注入（docker-compose 读同目录 .env），见 src/lib/auth.ts。
 
 # 复制项目（.dockerignore 已排除 node_modules/.next/uploads/本地数据库等）
 COPY . .

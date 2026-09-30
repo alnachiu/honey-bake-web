@@ -155,9 +155,25 @@ export async function POST(request: Request) {
         })
       }
 
-      // 处理地址
-      let addressId = data.addressId || null
-      if (data.address && !addressId) {
+      // 处理地址。
+      // 收货信息在**下单这一刻快照**到订单上，不能只留一个 addressId：
+      // 那只是个引用，顾客之后在「地址管理」里改一下或删掉地址，
+      // 历史订单上的收货人/电话/地址就会跟着变，或者直接变成空白。
+      let addressId: string | null = null
+      let receiver: { name: string; phone: string; region: string; detail: string } | null = null
+
+      if (data.addressId) {
+        // 归属校验。addressId 来自请求体，是用户可控的：不校验的话，
+        // 填一个别人的地址 id 就能把别人的收货信息挂到自己订单上，
+        // 再通过订单详情接口读出来——等于一个任意地址读取口子。
+        const owned = await tx.address.findFirst({
+          where: { id: data.addressId, userId: user.id },
+          select: { id: true, name: true, phone: true, region: true, detail: true }
+        })
+        if (!owned) throw new Error('收货地址不存在，请重新选择')
+        addressId = owned.id
+        receiver = { name: owned.name, phone: owned.phone, region: owned.region, detail: owned.detail }
+      } else if (data.address) {
         const addr = await tx.address.create({
           data: {
             userId: user.id,
@@ -169,6 +185,7 @@ export async function POST(request: Request) {
           }
         })
         addressId = addr.id
+        receiver = { name: addr.name, phone: addr.phone, region: addr.region, detail: addr.detail }
       }
 
       return tx.order.create({
@@ -186,6 +203,12 @@ export async function POST(request: Request) {
           giftQuantity: gift?.giftQuantity || 0,
           remark: data.remark || '',
           addressId,
+          // 收货信息快照。读取方一律「优先快照、为空再回退关联地址」，
+          // 这样存量老单（快照为空）不会突然显示成空白。
+          receiverName: receiver?.name ?? null,
+          receiverPhone: receiver?.phone ?? null,
+          receiverRegion: receiver?.region ?? null,
+          receiverDetail: receiver?.detail ?? null,
           wasMember,
           status: 'pending'
         },

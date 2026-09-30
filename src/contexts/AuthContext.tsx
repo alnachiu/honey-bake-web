@@ -12,6 +12,12 @@ interface User {
   avatar: string
   /** 会员到期时间；null 或已过期 = 非会员 */
   memberExpire?: string | null
+  /**
+   * 是否设过密码。false = 手机号自动建号、或店主在后台清除了密码，
+   * 此时「我的」页那块表单显示成「设置密码」且不要原密码。
+   * 由 /api/users/me 计算后下发，前端不能自己推断。
+   */
+  hasPassword?: boolean
 }
 
 interface AuthContextType {

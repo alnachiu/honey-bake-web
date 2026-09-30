@@ -15,7 +15,10 @@ async function main() {
       email: 'admin@honeybake.com',
       name: '店主',
       password: adminPassword,
-      phone: '13800138000',
+      // 刻意留空。以前这里是 '13800138000'，而 /api/auth/phone-login 只按手机号
+      // 发登录态——等于给店主账号配了一个公开的免密入口（这个号就写在 seed 里）。
+      // 手机号免密登录是**消费者**的功能，管理员只用邮箱+密码，不该有手机号。
+      phone: '',
       role: 'admin',
     }
   })

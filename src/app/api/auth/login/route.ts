@@ -15,6 +15,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '邮箱或密码错误' }, { status: 401 })
     }
 
+    // password 为 null = 该账号没有密码（手机号自动建号，或被店主清除了密码）。
+    // bcrypt.compare 拿到 null 会直接抛错，被外层 catch 吞成 500，
+    // 所以必须先判空，并给出「改用手机号登录」这种可操作的提示。
+    if (!user.password) {
+      return NextResponse.json(
+        { error: '该账号已改为手机号免密登录，请用手机号登录' },
+        { status: 401 }
+      )
+    }
+
     const valid = await verifyPassword(password, user.password)
     if (!valid) {
       return NextResponse.json({ error: '邮箱或密码错误' }, { status: 401 })

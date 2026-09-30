@@ -5,6 +5,63 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { formatDate } from '@/lib/utils'
+import { useLongPress, LONG_PRESS_STYLE } from '@/hooks/useLongPress'
+
+/**
+ * 一条消息气泡。抽成组件是为了挂长按 hook——hook 不能写在 map 循环里。
+ * 长按整段对话里的任意一条，就把这段对话从**自己这边**清掉。
+ */
+function MessageBubble({ m, mine, onLongPress }: { m: any; mine: boolean; onLongPress: () => void }) {
+  const longPress = useLongPress(onLongPress)
+  return (
+    <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+      <div
+        {...longPress}
+        style={LONG_PRESS_STYLE}
+        className={`max-w-[78%] rounded-2xl px-3.5 py-2 ${
+          mine ? 'bg-gradient-to-r from-primary-500 to-primary-400 text-white rounded-br-md'
+               : 'bg-white border border-warm-200 text-text-primary rounded-bl-md'
+        }`}
+      >
+        <p className="text-sm whitespace-pre-wrap break-words">{m.body}</p>
+        <p className={`text-[10px] mt-1 ${mine ? 'text-white/70' : 'text-text-light'}`}>
+          {formatDate(m.createdAt)}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/** 店主侧会话列表里的一行。长按 = 把这段对话从店主这边清掉 */
+function ConversationRow({ c, onOpen, onClear }: { c: any; onOpen: (c: any) => void; onClear: (c: any) => void }) {
+  const longPress = useLongPress(() => onClear(c))
+  return (
+    <button
+      {...longPress}
+      onClick={() => onOpen(c)}
+      style={LONG_PRESS_STYLE}
+      className="card w-full text-left flex gap-3 items-start"
+    >
+      <span className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0 text-lg">👤</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium text-text-primary truncate">{c.name}</p>
+          {c.unread > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500 text-white flex-shrink-0">
+              {c.unread}
+            </span>
+          )}
+          <span className="text-[10px] text-text-light ml-auto flex-shrink-0">{formatDate(c.lastMessageAt)}</span>
+        </div>
+        <p className="text-xs text-text-light mt-0.5">{c.phone}</p>
+        <p className="text-xs text-text-secondary mt-1 truncate">
+          {/* 标出最后一条是谁说的：店主一眼知道该轮到自己回了 */}
+          {c.lastMessageRole === 'admin' ? '我：' : ''}{c.lastMessage}
+        </p>
+      </div>
+    </button>
+  )
+}
 
 /**
  * 「联系小二」的聊天页。
@@ -102,6 +159,40 @@ export default function ChatPage() {
     if (!silent) setLoading(false)
   }
 
+  /**
+   * 清空某段对话。**只清自己这边**，对方的记录一条不动——服务端是按角色
+   * 给自己那侧的标记位打标（见 api/chat 的 DELETE），所以这里只管本地跟着变。
+   */
+  const clearChat = async (targetUserId: string, peerLabel: string) => {
+    if (!confirm(
+      `清空与${peerLabel}的全部聊天记录？\n\n` +
+      `清空后只在你这边消失，对方仍能看到原来的消息。\n` +
+      `你之后发新消息，这段对话会重新出现。`
+    )) return
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        // 店主必须指明清哪一位顾客；消费者的目标恒为自己，服务端会忽略这个字段
+        body: JSON.stringify(isAdmin ? { userId: targetUserId } : {})
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setToast(data.error || '清空失败')
+        setTimeout(() => setToast(''), 2500)
+        return
+      }
+
+      // 本地立刻反映。等下一轮轮询（8 秒）的话，用户会以为长按没生效又去试一遍
+      if (isAdmin) setConversations(prev => prev.filter(c => c.userId !== targetUserId))
+      setMessages([])
+    } catch (err) {
+      setToast('网络异常，请重试')
+      setTimeout(() => setToast(''), 2500)
+    }
+  }
+
   const send = async () => {
     const text = input.trim()
     if (!text || sending) return
@@ -151,22 +242,14 @@ export default function ChatPage() {
   )
 
   /** 消息气泡。senderRole 与本端一致就靠右、上主色，否则靠左、浅底色 */
-  const renderMessage = (m: any) => {
-    const mine = m.senderRole === myRole
-    return (
-      <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-        <div className={`max-w-[78%] rounded-2xl px-3.5 py-2 ${
-          mine ? 'bg-gradient-to-r from-primary-500 to-primary-400 text-white rounded-br-md'
-               : 'bg-white border border-warm-200 text-text-primary rounded-bl-md'
-        }`}>
-          <p className="text-sm whitespace-pre-wrap break-words">{m.body}</p>
-          <p className={`text-[10px] mt-1 ${mine ? 'text-white/70' : 'text-text-light'}`}>
-            {formatDate(m.createdAt)}
-          </p>
-        </div>
-      </div>
-    )
-  }
+  const renderMessage = (m: any) => (
+    <MessageBubble
+      key={m.id}
+      m={m}
+      mine={m.senderRole === myRole}
+      onLongPress={() => clearChat(isAdmin ? peerId : user.id, isAdmin ? (peer?.name || '这位顾客') : '店主')}
+    />
+  )
 
   /** 会话窗口（消费者和店主点进某位顾客后共用） */
   const chatWindow = (
@@ -238,9 +321,10 @@ export default function ChatPage() {
         )}
 
         <h1 className="text-lg font-bold text-text-primary mb-1">💬 顾客消息</h1>
-        <p className="text-sm text-text-light mb-4">
+        <p className="text-sm text-text-light mb-1">
           顾客从「联系小二」发来的消息都在这儿，闲置 {retentionDays} 天自动清除
         </p>
+        <p className="text-xs text-text-light mb-4">长按某位顾客可以清空这段对话</p>
 
         {loading ? (
           <div className="space-y-3">{[1, 2, 3].map(i => <div key={i} className="h-20 skeleton rounded-2xl" />)}</div>
@@ -252,29 +336,12 @@ export default function ChatPage() {
         ) : (
           <div className="space-y-2">
             {conversations.map(c => (
-              <button
+              <ConversationRow
                 key={c.id}
-                onClick={() => { setPeerId(c.userId); setPeer({ id: c.userId, name: c.name, phone: c.phone }) }}
-                className="card w-full text-left flex gap-3 items-start"
-              >
-                <span className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center flex-shrink-0 text-lg">👤</span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-text-primary truncate">{c.name}</p>
-                    {c.unread > 0 && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500 text-white flex-shrink-0">
-                        {c.unread}
-                      </span>
-                    )}
-                    <span className="text-[10px] text-text-light ml-auto flex-shrink-0">{formatDate(c.lastMessageAt)}</span>
-                  </div>
-                  <p className="text-xs text-text-light mt-0.5">{c.phone}</p>
-                  <p className="text-xs text-text-secondary mt-1 truncate">
-                    {/* 标出最后一条是谁说的：店主一眼知道该轮到自己回了 */}
-                    {c.lastMessageRole === 'admin' ? '我：' : ''}{c.lastMessage}
-                  </p>
-                </div>
-              </button>
+                c={c}
+                onOpen={c => { setPeerId(c.userId); setPeer({ id: c.userId, name: c.name, phone: c.phone }) }}
+                onClear={c => clearChat(c.userId, c.name)}
+              />
             ))}
           </div>
         )}
@@ -301,6 +368,7 @@ export default function ChatPage() {
             {isAdmin ? `与 ${peer?.name || '顾客'} 的对话` : '💬 联系小二'}
           </h1>
           {isAdmin && peer?.phone && <p className="text-[10px] text-text-light">{peer.phone}</p>}
+          {!isAdmin && <p className="text-[10px] text-text-light">长按消息可清空这段对话</p>}
         </div>
       </div>
 

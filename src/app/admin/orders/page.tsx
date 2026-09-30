@@ -2,8 +2,19 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { ORDER_TIME_RANGES, orderRangeToDates } from '@/lib/utils'
+import { resolveReceiver } from '@/lib/receiver'
 
 const TABS = ['全部', '待付款', '待制作', '配送中', '已完成']
+
+/**
+ * 订单上的收货人一行。优先用下单时的快照，老订单没有快照才回退到关联地址——
+ * 顾客之后在「地址管理」里改过或删掉地址，这里显示的仍是下单当时那一份。
+ * 打包的人看的就是这一行，所以带上 region（原来的写法漏了它）。
+ */
+const receiverLine = (order: any) => {
+  const r = resolveReceiver(order, order.address)
+  return r ? `${r.name} ${r.phone} ${r.region} ${r.detail}`.replace(/\s+/g, ' ').trim() : ''
+}
 const STATUS_MAP: Record<string, string> = { '全部': '', '待付款': 'pending', '待制作': 'paid', '配送中': 'delivering', '已完成': 'completed' }
 
 export default function AdminOrdersPage() {
@@ -206,7 +217,7 @@ export default function AdminOrdersPage() {
                 )}
               </div>
               <p className="text-xs text-text-light mb-1">{new Date(order.createdAt).toLocaleString('zh-CN')}</p>
-              {order.address && <p className="text-xs text-text-light mb-2">📍 {order.address.name} {order.address.phone} {order.address.detail}</p>}
+              {receiverLine(order) && <p className="text-xs text-text-light mb-2">📍 {receiverLine(order)}</p>}
               {order.trackingNo && <p className="text-xs text-blue-500 mb-2">📦 物流单号：{order.trackingNo}</p>}
               {/* 顾客点过「已扫码支付」：提醒店主核对到账，这就是后台要处理的待办 */}
               {order.status === 'pending' && order.payClaimedAt && (

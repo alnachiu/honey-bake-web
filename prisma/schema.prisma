@@ -11,7 +11,11 @@ model User {
   id               String            @id @default(cuid())
   email            String            @unique
   name             String
-  password         String
+  // null = 该账号没有密码，只能用手机号免密登录。
+  // 手机号注册（phone-login 自动建号）与店主后台「清除密码」都会写成 null；
+  // 用户在「我的」页自行设过密码后即为普通哈希。任何地方拿它做 bcrypt 比较前
+  // 必须先判空，否则 bcrypt 会抛错（被 catch 成 500）。
+  password         String?
   phone            String            @default("")
   avatar           String            @default("")
   role             String            @default("user") // user | admin
@@ -67,6 +71,13 @@ model Order {
   remark         String      @default("")
   addressId      String?
   address        Address?    @relation(fields: [addressId], references: [id])
+  // 收货信息快照。addressId 只是**引用**：消费者在「地址管理」里改一下或删掉地址，
+  // 历史订单的收货人/电话/地址就会跟着变或直接变空白。所以成单时必须把当时的
+  // 收货信息复制一份存在订单上，读取时优先用快照、快照为空再回退关联（兼容存量单）。
+  receiverName   String?
+  receiverPhone  String?
+  receiverRegion String?
+  receiverDetail String?
   // 下单当时是否为会员的快照。会员折扣率可能被店主设为 1（不打折），
   // 那时 memberDiscount 恒为 0，事后无法反推身份，所以必须在成单时落库，
   // 否则导出的「是否会员」列只能靠 memberDiscount > 0 猜。
@@ -250,6 +261,15 @@ model ChatMessage {
   // 收件方读过这条的时刻，null = 未读。未读数是店主侧列表的角标来源。
   readAt         DateTime?
   createdAt      DateTime         @default(now())
+  // 「清空聊天」是按边生效的：消息表是双方共用的，谁清了就给自己这边打个标记，
+  // 查询时按列名过滤即可，对方的记录完全不受影响（店主删了不影响消费者，反之亦然）。
+  // 刻意用布尔列而不是「各自的 clearedAt 时间戳」——时间戳方案要按父行的列去过滤子表，
+  // 而 Prisma 的 include.where / groupBy.where 只能写常量条件，表达不出来，
+  // 结果就是店主端的列表预览和未读角标都算不准。
+  // 这两列必须放在模型**末尾**：插在中间会让 Prisma 判定为重建表，追加在后面才是
+  // 纯 ADD COLUMN（SQLite 的 ADD COLUMN 只能加在末列）。
+  deletedForUser  Boolean  @default(false)
+  deletedForAdmin Boolean  @default(false)
 
   // 拉消息永远是「某个会话按时间正序」，这个复合索引正好覆盖
   @@index([conversationId, createdAt])
