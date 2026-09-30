@@ -50,6 +50,12 @@ model Product {
   status        String   @default("on") // on | off
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  // 店主在后台「↑↓」调出来的展示顺序，越小越前。
+  // 0 是「还没排过序」——所以新建的商品天然排在最前面（与上架时间倒序的既有行为一致）；
+  // 一旦店主调过顺序，重排接口会给每一项写入 1..n 的显式值，0 就只属于后来新建的。
+  // 必须是最后一个标量字段：SQLite 的 ADD COLUMN 只能加在末列，插在中间会让 Prisma 重建整张表
+  // （而 Product 被 OrderItem 引用着，能走 ADD COLUMN 就不要走重建）。
+  sort          Int      @default(0)
   orderItems    OrderItem[]
 }
 
@@ -149,6 +155,11 @@ model Coupon {
   periodCount  Int          @default(0) // 每个自然周期内最多领取 K 张（0 = 不启用）
   status       String       @default("active") // active | expired
   createdAt    DateTime     @default(now())
+  // 同 Product.sort：店主在后台「↑↓」调出来的展示顺序，越小越前，0 = 还没排过序（新建的排最前）。
+  // 同样必须放末尾才走 ADD COLUMN。**唯一写入者是 /api/coupons/reorder**——
+  // 千万不要把它加进 validateCouponInput 的白名单：那个 PUT 是全量覆盖，
+  // 一旦 sort 进了白名单，「隐藏/显示」开关和编辑页就会拿着重排前捕获的旧值把顺序写回去。
+  sort         Int          @default(0)
   userCoupons  UserCoupon[]
   planGifts    MembershipPlanCoupon[]
 }

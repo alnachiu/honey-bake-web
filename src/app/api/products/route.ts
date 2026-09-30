@@ -20,7 +20,11 @@ export async function GET(request: Request) {
 
     const products = await prisma.product.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      // sort 是店主在后台「↑↓」调出来的顺序，越小越前。
+      // 二级键必须是 createdAt desc（保持上架时间倒序）：存量商品的 sort 全是 0，
+      // 这样没排过序的店展示效果与从前完全一致；而新建的商品 sort 也是 0，
+      // 于是天然排在所有已排序项（1..n）之前——正是店主选定的「新品在最前」。
+      orderBy: [{ sort: 'asc' }, { createdAt: 'desc' }],
       skip: (page - 1) * pageSize,
       take: pageSize,
     })

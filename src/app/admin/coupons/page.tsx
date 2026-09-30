@@ -19,6 +19,8 @@ export default function AdminCouponsPage() {
   const [deletingId, setDeletingId] = useState('')
   const [togglingId, setTogglingId] = useState('')
   const [message, setMessage] = useState('')
+  // 重排在途锁：请求没回来之前禁用所有 ↑↓，避免连点产生前后不一致的 payload
+  const [reordering, setReordering] = useState(false)
 
   useEffect(() => { fetchCoupons() }, [])
 
@@ -82,6 +84,48 @@ export default function AdminCouponsPage() {
     setTimeout(() => setMessage(''), 2500)
   }
 
+  /**
+   * 上移/下移一位，并立刻把**完整**顺序存到服务端。
+   *
+   * 乐观更新：先改本地数组让界面立刻响应，接口失败就整体回滚，
+   * 免得界面显示一个根本没落库的顺序。
+   *
+   * 这是 sort 列唯一的写入点。**不要**把 sort 加到 PUT 的 body 里——
+   * 那个 PUT 是全量覆盖，一旦 sort 参与进去，「隐藏/显示」开关（它从列表 state 里
+   * 取 couponToForm(c)，捕获的是重排前的旧值）就会把刚调好的顺序悄悄写回去。
+   */
+  const move = async (index: number, direction: 'up' | 'down') => {
+    if (reordering) return
+    const target = direction === 'up' ? index - 1 : index + 1
+    if (target < 0 || target >= coupons.length) return
+
+    const before = coupons
+    const next = [...before]
+    const tmp = next[index]
+    next[index] = next[target]
+    next[target] = tmp
+
+    setCoupons(next)
+    setReordering(true)
+    try {
+      const res = await fetch('/api/coupons/reorder', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: next.map((k: any) => k.id) })
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setCoupons(before)
+        setMessage(data.error || '调整顺序失败，请重试')
+      }
+    } catch (err) {
+      setCoupons(before)
+      setMessage('网络异常，顺序没有保存')
+    }
+    setReordering(false)
+    setTimeout(() => setMessage(''), 2500)
+  }
+
   const handleDelete = async (c: any) => {
     // 删除会连带回收用户已领取的券，确认文案里写清影响面
     const claimCount = c.claimCount || 0
@@ -128,6 +172,10 @@ export default function AdminCouponsPage() {
         </div>
       )}
 
+      <p className="text-xs text-text-light mb-3 leading-relaxed">
+        ↑↓ 调整顺序，这个顺序就是顾客在领券中心看到的顺序。
+      </p>
+
       {showForm && (
         <div className="card mb-4 animate-slide-up">
           <CouponForm
@@ -147,7 +195,7 @@ export default function AdminCouponsPage() {
         <div className="text-center py-16"><p className="text-text-light">暂无优惠券</p></div>
       ) : (
         <div className="space-y-3">
-          {coupons.map(c => {
+          {coupons.map((c, index) => {
             const soldOut = c.stock > 0 && c.claimed >= c.stock
             return (
               <div key={c.id} className="card">
@@ -187,27 +235,42 @@ export default function AdminCouponsPage() {
                       </span>
                     </div>
                   </div>
-                  <div className="flex flex-col gap-1.5 flex-shrink-0">
-                    <Link
-                      href={`/admin/coupons/${c.id}/edit`}
-                      className="text-[10px] px-2 py-1 rounded-full border border-primary-200 text-primary-500 text-center"
-                    >
-                      编辑
-                    </Link>
-                    <button
-                      onClick={() => handleToggleVisible(c)}
-                      disabled={togglingId === c.id}
-                      className="text-[10px] px-2 py-1 rounded-full border border-warm-300 text-text-secondary disabled:opacity-50"
-                    >
-                      {togglingId === c.id ? '处理中' : c.visible === false ? '显示' : '隐藏'}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(c)}
-                      disabled={deletingId === c.id}
-                      className="text-[10px] px-2 py-1 rounded-full border border-red-200 text-red-400 disabled:opacity-50"
-                    >
-                      {deletingId === c.id ? '删除中' : '删除'}
-                    </button>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {/* ↑↓ 单列放，不混进右边那三个按钮的竖排里，否则卡片会被撑得很高 */}
+                    <div className="flex flex-col gap-1">
+                      <button
+                        onClick={() => move(index, 'up')}
+                        disabled={index === 0 || reordering}
+                        className="w-6 h-6 flex items-center justify-center rounded-full bg-warm-100 text-xs disabled:opacity-30"
+                      >↑</button>
+                      <button
+                        onClick={() => move(index, 'down')}
+                        disabled={index === coupons.length - 1 || reordering}
+                        className="w-6 h-6 flex items-center justify-center rounded-full bg-warm-100 text-xs disabled:opacity-30"
+                      >↓</button>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Link
+                        href={`/admin/coupons/${c.id}/edit`}
+                        className="text-[10px] px-2 py-1 rounded-full border border-primary-200 text-primary-500 text-center"
+                      >
+                        编辑
+                      </Link>
+                      <button
+                        onClick={() => handleToggleVisible(c)}
+                        disabled={togglingId === c.id}
+                        className="text-[10px] px-2 py-1 rounded-full border border-warm-300 text-text-secondary disabled:opacity-50"
+                      >
+                        {togglingId === c.id ? '处理中' : c.visible === false ? '显示' : '隐藏'}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(c)}
+                        disabled={deletingId === c.id}
+                        className="text-[10px] px-2 py-1 rounded-full border border-red-200 text-red-400 disabled:opacity-50"
+                      >
+                        {deletingId === c.id ? '删除中' : '删除'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

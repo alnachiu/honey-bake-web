@@ -150,7 +150,9 @@ export async function GET(request: Request) {
       const user = await getAuthUser()
       if (user?.role === 'admin') {
         const coupons = await prisma.coupon.findMany({
-          orderBy: { createdAt: 'desc' },
+          // sort 是店主在「↑↓」里调出来的顺序；二级键保持 createdAt desc，
+          // 这样没排过序（sort 全为 0）的店展示效果与从前完全一致
+          orderBy: [{ sort: 'asc' }, { createdAt: 'desc' }],
           // 哪些会员卡会自动推这张券，列表上给个徽章
           include: { planGifts: { select: { plan: { select: { id: true, name: true } } } } }
         })
@@ -186,7 +188,8 @@ export async function GET(request: Request) {
     // （领了之后它仍然会出现在券包里，因为「隐藏」不等于「失效」）。
     const active = await prisma.coupon.findMany({
       where: { status: 'active' },
-      orderBy: { createdAt: 'desc' }
+      // 同上：店主排的顺序优先，没排过的按上架时间倒序（= 从前的行为）
+      orderBy: [{ sort: 'asc' }, { createdAt: 'desc' }]
     })
     const coupons = active.filter(c => isCouponInWindow(c) && c.visible)
 
